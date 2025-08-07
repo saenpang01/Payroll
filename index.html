@@ -1,0 +1,264 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ระบบการทำเงินเดือนอัตโนมัติ</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.3.0/papaparse.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🏢 ระบบการทำเงินเดือนอัตโนมัติ</h1>
+            <p>ระบบจัดการเงินเดือนที่ครบครันและทันสมัย</p>
+        </div>
+        
+        <div class="tabs">
+            <button class="tab active" onclick="showTab('upload')">📁 อัปโหลดข้อมูล</button>
+            <button class="tab" onclick="showTab('employees')">👥 จัดการพนักงาน</button>
+            <button class="tab" onclick="showTab('calculate')">💰 คำนวณเงินเดือน</button>
+            <button class="tab" onclick="showTab('payroll')">🏦 ไฟล์ธนาคาร</button>
+            <button class="tab" onclick="showTab('payslips')">📄 สลิปเงินเดือน</button>
+            <button class="tab" onclick="showTab('reports')">📊 รายงาน</button>
+        </div>
+        
+        <!-- Tab 1: อัปโหลดข้อมูล -->
+        <div id="upload" class="tab-content active">
+            <div class="upload-area" onclick="document.getElementById('csvFile').click()">
+                <h3>📂 อัปโหลดไฟล์ CSV เวลาเข้าออกงาน</h3>
+                <p>คลิกที่นี่หรือลากไฟล์มาวาง</p>
+                <p style="font-size: 12px; color: #666; margin-top: 10px;">
+                    รองรับไฟล์: CSV จากเครื่องสแกน (ต้องมีคอลัมน์: sJobNo, sName, date, time)
+                </p>
+                <input type="file" id="csvFile" accept=".csv" style="display: none;" onchange="handleFileUpload(this)">
+            </div>
+            
+            <div id="uploadProgress" class="hidden">
+                <div class="progress">
+                    <div class="progress-bar" id="progressBar"></div>
+                </div>
+                <p id="progressText">กำลังประมวลผล...</p>
+            </div>
+            
+            <div id="uploadResult"></div>
+        </div>
+        
+        <!-- Tab 2: จัดการพนักงาน -->
+        <div id="employees" class="tab-content">
+            <div class="employee-setup">
+                <h3>👥 ตั้งค่าข้อมูลพนักงาน</h3>
+                <div class="form-grid">
+                    <div class="form-group">
+                        <label>รหัสพนักงาน:</label>
+                        <input type="text" id="empId" placeholder="EMP001">
+                    </div>
+                    <div class="form-group">
+                        <label>ชื่อพนักงาน:</label>
+                        <input type="text" id="empName" placeholder="นายสมชาย ใจดี">
+                    </div>
+                    <div class="form-group">
+                        <label>ประเภทพนักงาน:</label>
+                        <select id="empType">
+                            <option value="monthly">รายเดือน</option>
+                            <option value="daily">รายวัน</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label>เงินเดือน/ค่าแรงต่อวัน:</label>
+                        <input type="number" id="empSalary" placeholder="30000">
+                    </div>
+                    <div class="form-group">
+                        <label>อีเมล:</label>
+                        <input type="email" id="empEmail" placeholder="employee@company.com">
+                    </div>
+                    <div class="form-group">
+                        <label>เลขบัญชีธนาคาร:</label>
+                        <input type="text" id="empAccount" placeholder="123-4-56789-0">
+                    </div>
+                </div>
+                
+                <div class="form-group">
+                    <label>เวลาทำงานมาตรฐาน:</label>
+                    <div style="display: flex; gap: 10px; align-items: center;">
+                        <input type="time" id="workStart" value="08:00">
+                        <span>ถึง</span>
+                        <input type="time" id="workEnd" value="17:00">
+                        <span>พักเที่ยง</span>
+                        <input type="number" id="lunchBreak" value="60" min="0" max="120" style="width: 80px;">
+                        <span>นาที</span>
+                    </div>
+                </div>
+                
+                <button class="btn" onclick="addEmployee()">➕ เพิ่มพนักงาน</button>
+                <button class="btn btn-secondary" onclick="loadSampleEmployees()">📋 โหลดข้อมูลตัวอย่าง</button>
+            </div>
+            
+            <div class="table-container">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>รหัส</th>
+                            <th>ชื่อ</th>
+                            <th>ประเภท</th>
+                            <th>เงินเดือน/วัน</th>
+                            <th>อีเมล</th>
+                            <th>เลขบัญชี</th>
+                            <th>การจัดการ</th>
+                        </tr>
+                    </thead>
+                    <tbody id="employeeTable">
+                        <!-- Employee data will be populated here -->
+                    </tbody>
+                </table>
+            </div>
+        </div>
+        
+        <!-- Tab 3: คำนวณเงินเดือน -->
+        <div id="calculate" class="tab-content">
+            <div class="form-grid">
+                <div class="form-group">
+                    <label>เลือกเดือน:</label>
+                    <input type="month" id="payrollMonth" value="">
+                </div>
+                <div class="form-group">
+                    <label>อัตรา OT (ต่อชั่วโมง):</label>
+                    <input type="number" id="otRate" value="50" min="0">
+                </div>
+                <div class="form-group">
+                    <label>วันหยุดประจำสัปดาห์:</label>
+                    <select id="weekendDays" multiple>
+                        <option value="0">อาทิตย์</option>
+                        <option value="1">จันทร์</option>
+                        <option value="2">อังคาร</option>
+                        <option value="3">พุธ</option>
+                        <option value="4">พฤหัสบดี</option>
+                        <option value="5">ศุกร์</option>
+                        <option value="6" selected>เสาร์</option>
+                    </select>
+                </div>
+            </div>
+            
+            <button class="btn" onclick="calculatePayroll()">🧮 คำนวณเงินเดือนทั้งหมด</button>
+            <button class="btn btn-success" onclick="exportCalculation()">📊 ส่งออกผลการคำนวณ</button>
+            
+            <div id="calculationResult"></div>
+        </div>
+        
+        <!-- Tab 4: ไฟล์ธนาคาร -->
+        <div id="payroll" class="tab-content">
+            <div class="form-grid">
+                <div class="form-group">
+                    <label>ธนาคาร:</label>
+                    <select id="bankType">
+                        <option value="kbank">กสิกรไทย</option>
+                        <option value="scb">ไทยพาณิชย์</option>
+                        <option value="bbl">กรุงเทพ</option>
+                        <option value="tmb">ทหารไทยธนชาต</option>
+                        <option value="ktb">กรุงไทย</option>
+                        <option value="generic">รูปแบบทั่วไป</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label>บัญชีบริษัท:</label>
+                    <input type="text" id="companyAccount" placeholder="123-4-56789-0">
+                </div>
+                <div class="form-group">
+                    <label>ชื่อบริษัท:</label>
+                    <input type="text" id="companyName" placeholder="บริษัท ABC จำกัด">
+                </div>
+            </div>
+            
+            <button class="btn" onclick="generateBankFile()">🏦 สร้างไฟล์สำหรับธนาคาร</button>
+            <button class="btn btn-secondary" onclick="previewBankFile()">👁️ ดูตัวอย่างไฟล์</button>
+            
+            <div id="bankFileResult"></div>
+        </div>
+        
+        <!-- Tab 5: สลิปเงินเดือน -->
+        <div id="payslips" class="tab-content">
+            <div class="form-grid">
+                <div class="form-group">
+                    <label>เทมเพลตสลิป:</label>
+                    <select id="payslipTemplate">
+                        <option value="standard">มาตรฐาน</option>
+                        <option value="detailed">รายละเอียด</option>
+                        <option value="simple">เรียบง่าย</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label>โลโก้บริษัท (URL):</label>
+                    <input type="url" id="companyLogo" placeholder="https://example.com/logo.png">
+                </div>
+                <div class="form-group">
+                    <label>ที่อยู่บริษัท:</label>
+                    <textarea id="companyAddress" rows="3" placeholder="123 ถนนสุขุมวิท แขวงคลองตัน เขตคลองตัน กรุงเทพฯ 10110"></textarea>
+                </div>
+            </div>
+            
+            <div class="form-group">
+                <label>
+                    <input type="checkbox" id="autoEmail" checked>
+                    ส่งอีเมลอัตโนมัติให้พนักงานทั้งหมด
+                </label>
+            </div>
+            
+            <button class="btn" onclick="generatePayslips()">📄 สร้างสลิปเงินเดือนทั้งหมด</button>
+            <button class="btn btn-success" onclick="sendAllPayslips()">📧 ส่งสลิปทั้งหมดทางอีเมล</button>
+            
+            <div id="payslipResult"></div>
+        </div>
+        
+        <!-- Tab 6: รายงาน -->
+        <div id="reports" class="tab-content">
+            <div class="summary-cards">
+                <div class="card">
+                    <h3>จำนวนพนักงานทั้งหมด</h3>
+                    <div class="value" id="totalEmployees">0</div>
+                </div>
+                <div class="card">
+                    <h3>เงินเดือนรวมต่อเดือน</h3>
+                    <div class="value" id="totalSalary">0 ฿</div>
+                </div>
+                <div class="card">
+                    <h3>ชั่วโมง OT รวม</h3>
+                    <div class="value" id="totalOT">0 ชม.</div>
+                </div>
+                <div class="card">
+                    <h3>วันทำงานเฉลี่ย</h3>
+                    <div class="value" id="avgWorkDays">0 วัน</div>
+                </div>
+            </div>
+            
+            <div class="table-container">
+                <h3>📊 สรุปข้อมูลพนักงานรายคน</h3>
+                <table>
+                    <thead>
+                        <tr>
+                            <th>รหัส</th>
+                            <th>ชื่อ</th>
+                            <th>วันทำงาน</th>
+                            <th>ชั่วโมงทำงาน</th>
+                            <th>ชั่วโมง OT</th>
+                            <th>เงินเดือนพื้นฐาน</th>
+                            <th>ค่า OT</th>
+                            <th>เงินรวม</th>
+                            <th>เวลาเข้างานเฉลี่ย</th>
+                        </tr>
+                    </thead>
+                    <tbody id="reportTable">
+                        <!-- Report data will be populated here -->
+                    </tbody>
+                </table>
+            </div>
+            
+            <div style="margin-top: 20px;">
+                <button class="btn" onclick="exportReport()">📊 ส่งออกรายงาน Excel</button>
+                <button class="btn btn-secondary" onclick="printReport()">🖨️ พิมพ์รายงาน</button>
+            </div>
+        </div>
+    </div>
+    <script src="script.js"></script>
+</body>
+</html>
