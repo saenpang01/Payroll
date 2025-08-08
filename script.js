@@ -1,351 +1,377 @@
-// Global state (in-memory "database")
+// =================================================================
+//                 ระบบคำนวณเงินเดือน - เวอร์ชันใช้งานจริง
+// =================================================================
+
+// --- 1. Global State: ตัวแปรหลักสำหรับเก็บข้อมูล ---
 let employees = [];
 let timeRecords = [];
 let payrollResults = [];
 
-// DOM Ready
-document.addEventListener('DOMContentLoaded', () => {
-    // Set default month for payroll calculation
+// --- 2. Firebase/LocalStorage Data Functions ---
+// หมายเหตุ: ส่วนนี้จะทำงานเมื่อคุณใส่ Firebase Config ของคุณ
+// ถ้ายังไม่ใส่ จะใช้ LocalStorage เป็นตัวสำรองชั่วคราว
+const firebaseConfig = {
+  apiKey: "AIzaSyALdFBe881BJSwU7b9MukWDIBEWKESO7OA",
+  authDomain: "payroll-54e6f.firebaseapp.com",
+  projectId: "payroll-54e6f",
+  storageBucket: "payroll-54e6f.firebasestorage.app",
+  messagingSenderId: "1042079082074",
+  appId: "1:1042079082074:web:f12af17e927e6116185a63"
+};
+
+let db;
+try {
+    if (firebaseConfig.apiKey && firebaseConfig.apiKey !== "AIzaSy...YOUR_API_KEY") {
+        firebase.initializeApp(firebaseConfig);
+        db = firebase.firestore();
+        console.log("Firebase initialized successfully!");
+    }
+} catch (e) {
+    console.error("Firebase initialization failed. Using LocalStorage as fallback.", e);
+}
+
+async function saveData(employeeData) {
+    if (db) { // ถ้าเชื่อมต่อ Firebase อยู่ ให้ใช้ Firestore
+        try {
+            await db.collection("employees").doc(employeeData.id).set(employeeData);
+        } catch (error) {
+            console.error("Error saving to Firebase:", error);
+        }
+    } else { // ถ้าไม่ ให้ใช้ LocalStorage
+        const existingIndex = employees.findIndex(emp => emp.id === employeeData.id);
+        if (existingIndex > -1) {
+            employees[existingIndex] = employeeData;
+        } else {
+            employees.push(employeeData);
+        }
+        localStorage.setItem('payroll_app_employees', JSON.stringify(employees));
+    }
+}
+
+async function loadData() {
+    if (db) {
+        try {
+            const snapshot = await db.collection("employees").get();
+            const loadedEmployees = [];
+            snapshot.forEach(doc => loadedEmployees.push(doc.data()));
+            employees = loadedEmployees;
+        } catch (error) {
+            console.error("Error loading from Firebase:", error);
+        }
+    } else {
+        const employeesData = localStorage.getItem('payroll_app_employees');
+        if (employeesData) {
+            employees = JSON.parse(employeesData);
+        }
+    }
+}
+
+async function deleteData(empId) {
+    if (db) {
+        try {
+            await db.collection("employees").doc(empId).delete();
+        } catch (error) {
+            console.error("Error deleting from Firebase:", error);
+        }
+    } else {
+        employees = employees.filter(emp => emp.id !== empId);
+        localStorage.setItem('payroll_app_employees', JSON.stringify(employees));
+    }
+}
+
+
+// --- 3. DOM Ready: สั่งให้ทำงานทันทีที่เปิดหน้าเว็บ ---
+document.addEventListener('DOMContentLoaded', async () => {
+    await loadData();
     const today = new Date();
     const month = (today.getMonth() + 1).toString().padStart(2, '0');
     const year = today.getFullYear();
-    document.getElementById('payrollMonth').value = `${year}-${month}`;
-    
-    // Initial UI update
+    const payrollMonthElem = document.getElementById('payrollMonth');
+    if (payrollMonthElem) payrollMonthElem.value = `${year}-${month}`;
     updateEmployeeTable();
     updateReportSummary();
 });
 
-// --- Tab Management ---
-function showTab(tabName) {
-    // Hide all tab contents
-    const tabContents = document.querySelectorAll('.tab-content');
-    tabContents.forEach(content => content.classList.remove('active'));
-    
-    // Deactivate all tabs
-    const tabs = document.querySelectorAll('.tab');
-    tabs.forEach(tab => tab.classList.remove('active'));
-    
-    // Show the selected tab content and activate the tab button
-    document.getElementById(tabName).classList.add('active');
-    event.currentTarget.classList.add('active');
-
-    // Refresh data for specific tabs when they are shown
-    if (tabName === 'reports') {
-        updateReportSummary();
-        updateReportTable();
-    }
+// --- 4. Tab Management ---
+function showTab(tabName, clickedButton) {
+    document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+    document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+    const tabContent = document.getElementById(tabName);
+    if (tabContent) tabContent.classList.add('active');
+    if (clickedButton) clickedButton.classList.add('active');
 }
 
-// --- CSV Upload (Tab 1) ---
+// --- 5. CSV Upload ---
 function handleFileUpload(input) {
     const file = input.files[0];
-    if (!file) {
-        return;
-    }
-
-    const uploadProgress = document.getElementById('uploadProgress');
-    const progressBar = document.getElementById('progressBar');
-    const progressText = document.getElementById('progressText');
-    const uploadResult = document.getElementById('uploadResult');
-
-    uploadResult.innerHTML = '';
-    uploadProgress.classList.remove('hidden');
-    progressBar.style.width = '0%';
-    progressText.textContent = 'กำลังอัปโหลด...';
-
+    if (!file) return;
     Papa.parse(file, {
-        header: true,
-        skipEmptyLines: true,
-        // This function is called for each row during parsing
-        step: function(row, parser) {
-            const progress = (row.meta.cursor / file.size * 100).toFixed(2);
-            progressBar.style.width = `${progress}%`;
-            progressText.textContent = `กำลังประมวลผล... ${progress}%`;
-        },
-        // This function is called when parsing is complete
+        header: true, skipEmptyLines: true,
         complete: function(results) {
-            progressBar.style.width = '100%';
-            progressText.textContent = 'ประมวลผลเสร็จสิ้น!';
-
-            const scanEvents = results.data;
-
-            // --- New Robust Header Detection ---
-            // ค้นหาชื่อคอลัมน์จริงๆ ที่อยู่ในไฟล์ โดยไม่สนใจตัวพิมพ์เล็ก-ใหญ่
-            const originalHeaders = results.meta.fields;
-            const findHeader = (possibleLowerCaseNames) => {
-                return originalHeaders.find(h => possibleLowerCaseNames.includes(h.trim().toLowerCase()));
-            };
-
-            const idHeader = findHeader(['sjobno']);
-            const nameHeader = findHeader(['sname']);
-            const dateHeader = findHeader(['date']);
-            const timeHeader = findHeader(['time']);
-
-            // ตรวจสอบว่าพบคอลัมน์ที่จำเป็นทั้งหมดหรือไม่
-            if (!idHeader || !dateHeader || !timeHeader) {
-                 // เพิ่ม log สำหรับช่วยดีบักใน Console (กด F12 ในเบราว์เซอร์เพื่อดู)
-                 console.error("Header validation failed! The app could not find the required columns.");
-                 console.log("Required headers (lowercase): 'sjobno', 'date', 'time'. Optional: 'sname'");
-                 console.log("Headers found in file:", results.meta.fields);
-                 uploadResult.innerHTML = `<p class="error" style="color: #721c24;">ไฟล์ CSV ไม่ถูกต้อง! ไม่พบคอลัมน์ที่จำเป็น (sJobNo, Date, Time) ในไฟล์ที่อัปโหลด</p>`;
-                 uploadProgress.classList.add('hidden');
-                 return;
-            }
-
-            // Process raw scan events to group them by employee and date
+            const findHeader = (fields, names) => fields.find(h => h && names.includes(h.trim().toLowerCase()));
+            const idHeader = findHeader(results.meta.fields, ['sjobno']);
+            const dateHeader = findHeader(results.meta.fields, ['date']);
+            const timeHeader = findHeader(results.meta.fields, ['time']);
+            if (!idHeader || !dateHeader || !timeHeader) { alert('ไฟล์ CSV ไม่ถูกต้อง!'); return; }
             const dailyRecords = {};
-            scanEvents.forEach(scan => {
-                // ดึงข้อมูลโดยใช้ชื่อคอลัมน์ที่หาเจอ
-                const id = scan[idHeader];
-                const date = scan[dateHeader];
-                const time = scan[timeHeader];
-
-                // ข้ามแถวที่ข้อมูลไม่สมบูรณ์
-                if (!id || !date || !time) {
-                    return;
-                }
-
+            results.data.forEach(scan => {
+                const id = scan[idHeader]; const date = scan[dateHeader]; const time = scan[timeHeader];
+                if (!id || id.trim() === '0' || !date || !time) return;
                 const key = `${id}-${date}`;
-                if (!dailyRecords[key]) {
-                    // If this is the first scan for this employee on this day, create a new record
-                    dailyRecords[key] = {
-                        id: id,
-                        name: nameHeader ? scan[nameHeader] : '', // ใช้ชื่อถ้าเจอคอลัมน์ sName
-                        date: date,
-                        timeIn: time,
-                        timeOut: time // Initialize timeOut with the first scan time
-                    };
-                } else {
-                    // If a record already exists, update timeIn (earliest) and timeOut (latest)
-                    if (time < dailyRecords[key].timeIn) {
-                        dailyRecords[key].timeIn = time;
-                    }
-                    if (time > dailyRecords[key].timeOut) {
-                        dailyRecords[key].timeOut = time;
-                    }
-                }
+                if (!dailyRecords[key]) { dailyRecords[key] = { id, date, times: [time] };}
+                else { dailyRecords[key].times.push(time); }
             });
-
-            // Convert the grouped records object back into an array
-            timeRecords = Object.values(dailyRecords);
-
-            // If timeIn and timeOut are the same, it means only one scan. Mark timeOut as not available.
-            timeRecords.forEach(record => {
-                if (record.timeIn === record.timeOut) {
-                    record.timeOut = '-';
-                }
+            timeRecords = Object.values(dailyRecords).map(rec => {
+                rec.times.sort();
+                rec.timeIn = rec.times[0];
+                rec.timeOut = rec.times[rec.times.length - 1];
+                return rec;
             });
-
-            displayUploadResult(timeRecords);
-            setTimeout(() => uploadProgress.classList.add('hidden'), 2000);
-            
-            // Suggest moving to the next tab
-            // --- Auto-populate/update employee list from uploaded data ---
-            const uploadedEmployees = {};
-            timeRecords.forEach(record => {
-                // Check if we've already processed this employee ID
-                if (!uploadedEmployees[record.id]) {
-                    // Check if this employee already exists in our main list
-                    const employeeExists = employees.some(e => e.id === record.id);
-                    if (!employeeExists) {
-                        uploadedEmployees[record.id] = {
-                            id: record.id,
-                            name: record.name || `พนักงาน #${record.id}`
-                        };
-                    }
-                }
-            });
-
-            const newEmployees = Object.values(uploadedEmployees);
-            if (newEmployees.length > 0) {
-                newEmployees.forEach(emp => {
-                    employees.push({ ...emp, type: 'daily', salary: 350, email: '', account: '' });
-                });
-                updateEmployeeTable(); // Refresh the employee table view
-            }
-
-            let alertMessage = `${timeRecords.length} บันทึกข้อมูลรายวันถูกสร้างขึ้นสำเร็จ!`;
-            if (newEmployees.length > 0) {
-                alertMessage += `\n\nพบและเพิ่มพนักงานใหม่ ${newEmployees.length} คน ไปยังแท็บ "จัดการพนักงาน" โดยอัตโนมัติ`;
-            }
-            alert(alertMessage);
-        },
-        error: function(err, file) {
-            uploadProgress.classList.add('hidden');
-            uploadResult.innerHTML = `<p class="alert alert-error">เกิดข้อผิดพลาดในการอ่านไฟล์: ${err.message}</p>`;
+            alert(`อัปโหลดสำเร็จ! พบข้อมูล ${timeRecords.length} รายการ`);
         }
     });
 }
 
-function displayUploadResult(data) {
-    const uploadResult = document.getElementById('uploadResult');
-    if (data.length === 0) {
-        uploadResult.innerHTML = '<p class="alert alert-info">ประมวลผลไฟล์สำเร็จ แต่ไม่พบข้อมูลการสแกนที่สมบูรณ์ (รหัส, วันที่, เวลา) ในไฟล์</p>';
-        return;
-    }
-
-    let table = `
-        <h4>ตัวอย่างข้อมูลที่อัปโหลด (${data.length} รายการ):</h4>
-        <div class="table-container">
-            <table>
-                <thead>
-                    <tr>
-                        <th>รหัสพนักงาน</th>
-                        <th>ชื่อ</th>
-                        <th>วันที่</th>
-                        <th>เวลาเข้า</th>
-                        <th>เวลาออก</th>
-                    </tr>
-                </thead>
-                <tbody>
-    `;
-
-    // Display first 5 rows as a sample
-    data.slice(0, 5).forEach(row => {
-        table += `
-            <tr>
-                <td>${row.id || ''}</td>
-                <td>${row.name || ''}</td>
-                <td>${row.date || ''}</td>
-                <td>${row.timeIn || ''}</td>
-                <td>${row.timeOut || ''}</td>
-            </tr>
-        `;
-    });
-
-    if (data.length > 5) {
-        table += `<tr><td colspan="5">... และอีก ${data.length - 5} รายการ</td></tr>`;
-    }
-
-    table += '</tbody></table></div>';
-    uploadResult.innerHTML = table;
-}
-
-// --- Employee Management (Tab 2) ---
-function addEmployee() {
-    const empIdInput = document.getElementById('empId');
-    const empNameInput = document.getElementById('empName');
-    const empSalaryInput = document.getElementById('empSalary');
-
-    const empId = empIdInput.value.trim();
-    const empName = empNameInput.value.trim();
-    const empType = document.getElementById('empType').value;
-    const empSalary = empSalaryInput.value;
-    const empEmail = document.getElementById('empEmail').value.trim();
-    const empAccount = document.getElementById('empAccount').value.trim();
-
-    if (!empId || !empName || !empSalary) {
-        alert('กรุณากรอกข้อมูลให้ครบถ้วน: รหัสพนักงาน, ชื่อ, และเงินเดือน/ค่าแรง');
-        return;
-    }
-
-    if (employees.some(emp => emp.id === empId)) {
-        alert('รหัสพนักงานนี้มีอยู่แล้วในระบบ');
-        return;
-    }
-
-    const newEmployee = {
-        id: empId,
-        name: empName,
-        type: empType,
-        salary: parseFloat(empSalary),
-        email: empEmail,
-        account: empAccount
+// --- 6. Employee Management ---
+async function addEmployee() {
+    const empId = document.getElementById('empId').value.trim();
+    const empName = document.getElementById('empName').value.trim();
+    if (!empId || !empName) { alert('กรุณากรอกรหัสและชื่อพนักงาน'); return; }
+    const employeeData = {
+        id: empId, name: empName,
+        salary: document.getElementById('empSalary').value || 0,
+        type: document.getElementById('empType').value || 'monthly',
+        email: document.getElementById('empEmail').value || '',
+        account: document.getElementById('empAccount').value || ''
     };
-
-    employees.push(newEmployee);
+    await saveData(employeeData);
+    await loadData();
     updateEmployeeTable();
-    updateReportSummary();
-
-    // Clear form fields for next entry
-    empIdInput.value = '';
-    empNameInput.value = '';
-    empSalaryInput.value = '';
-    document.getElementById('empEmail').value = '';
-    document.getElementById('empAccount').value = '';
-    empIdInput.focus();
-}
-
-function loadSampleEmployees() {
-    if (employees.length > 0 && !confirm('การกระทำนี้จะลบข้อมูลพนักงานที่มีอยู่และแทนที่ด้วยข้อมูลตัวอย่าง คุณแน่ใจหรือไม่?')) {
-        return;
-    }
-    employees = [
-        { id: 'EMP001', name: 'สมชาย ใจดี', type: 'monthly', salary: 35000, email: 'somchai.j@example.com', account: '111-2-33333-4' },
-        { id: 'EMP002', name: 'สมหญิง จริงใจ', type: 'monthly', salary: 42000, email: 'somyimg.j@example.com', account: '222-3-44444-5' },
-        { id: 'D001', name: 'มานะ อดทน', type: 'daily', salary: 450, email: 'mana.o@example.com', account: '333-4-55555-6' },
-        { id: 'D002', name: 'ปิติ ยินดี', type: 'daily', salary: 420, email: 'piti.y@example.com', account: '444-5-66666-7' }
-    ];
-    updateEmployeeTable();
-    updateReportSummary();
-    alert('โหลดข้อมูลพนักงานตัวอย่าง 4 คนเรียบร้อยแล้ว');
+    const empForm = document.getElementById('empForm');
+    if (empForm) empForm.reset();
 }
 
 function updateEmployeeTable() {
-    const tableBody = document.getElementById('employeeTable');
-    if (employees.length === 0) {
-        tableBody.innerHTML = '<tr><td colspan="7" style="text-align: center; padding: 20px;">ยังไม่มีข้อมูลพนักงาน (อัปโหลดไฟล์ CSV หรือเพิ่มด้วยตนเอง)</td></tr>';
-        return;
-    }
-
-    tableBody.innerHTML = ''; // Clear existing rows
-    employees.forEach((emp, index) => {
+    const tableBody = document.getElementById('employeeTableBody'); if (!tableBody) return;
+    tableBody.innerHTML = '';
+    employees.forEach(emp => {
         const row = tableBody.insertRow();
-        row.innerHTML = `
-            <td>${emp.id}</td>
-            <td>${emp.name}</td>
-            <td>${emp.type === 'monthly' ? 'รายเดือน' : 'รายวัน'}</td>
-            <td>${emp.salary.toLocaleString()}</td>
-            <td>${emp.email || '-'}</td>
-            <td>${emp.account || '-'}</td>
-            <td>
-                <button class="btn-small btn-edit" onclick="editEmployee(${index})">แก้ไข</button>
-                <button class="btn-small btn-danger" onclick="deleteEmployee(${index})">ลบ</button>
-            </td>
-        `;
+        row.innerHTML = `<td>${emp.id}</td><td>${emp.name}</td><td>${emp.type}</td><td>${parseFloat(emp.salary).toLocaleString('th-TH')}</td><td><button onclick="editEmployee('${emp.id}')">แก้ไข</button><button onclick="deleteEmployee('${emp.id}')">ลบ</button></td>`;
     });
 }
 
-function editEmployee(index) {
-    // การแก้ไขเบื้องต้นผ่าน prompt (ในแอปจริงอาจใช้ modal)
-    const emp = employees[index];
-    const newName = prompt(`แก้ไขชื่อของพนักงาน (ID: ${emp.id}):`, emp.name);
-    if (newName && newName.trim() !== '') {
-        employees[index].name = newName.trim();
-        updateEmployeeTable();
+function editEmployee(empId) {
+    const emp = employees.find(e => e.id === empId);
+    if (emp) {
+        document.getElementById('empId').value = emp.id;
+        document.getElementById('empName').value = emp.name;
+        document.getElementById('empType').value = emp.type;
+        document.getElementById('empSalary').value = emp.salary;
+        document.getElementById('empEmail').value = emp.email;
+        document.getElementById('empAccount').value = emp.account;
     }
 }
 
-function deleteEmployee(index) {
-    const emp = employees[index];
-    if (confirm(`คุณแน่ใจหรือไม่ว่าต้องการลบพนักงาน "${emp.name}"?`)) {
-        employees.splice(index, 1); // ลบพนักงานออกจาก array
+async function deleteEmployee(empId) {
+    const emp = employees.find(e => e.id === empId);
+    if (emp && confirm(`ต้องการลบพนักงาน ${emp.name}?`)) {
+        await deleteData(empId);
+        await loadData();
         updateEmployeeTable();
         updateReportSummary();
     }
 }
 
-// --- Payroll Calculation (Tab 3) ---
-function calculatePayroll() { alert('ฟังก์ชัน "คำนวณเงินเดือน" ยังไม่ได้ถูกสร้าง'); }
-function exportCalculation() { alert('ฟังก์ชัน "ส่งออกผลการคำนวณ" ยังไม่ได้ถูกสร้าง'); }
+// --- 7. Payroll Calculation ---
+function calculatePayroll() {
+    const payrollMonthInput = document.getElementById('payrollMonth').value;
+    if (!payrollMonthInput) {
+        alert('กรุณาเลือกเดือนที่ต้องการคำนวณ');
+        return;
+    }
+    if (timeRecords.length === 0) {
+        alert('กรุณาอัปโหลดข้อมูลเวลาทำงานก่อน');
+        return;
+    }
 
-// --- Bank File (Tab 4) ---
-function generateBankFile() { alert('ฟังก์ชัน "สร้างไฟล์สำหรับธนาคาร" ยังไม่ได้ถูกสร้าง'); }
-function previewBankFile() { alert('ฟังก์ชัน "ดูตัวอย่างไฟล์" ยังไม่ได้ถูกสร้าง'); }
+    const [year, month] = payrollMonthInput.split('-');
+    payrollResults = [];
 
-// --- Payslips (Tab 5) ---
-function generatePayslips() { alert('ฟังก์ชัน "สร้างสลิปเงินเดือนทั้งหมด" ยังไม่ได้ถูกสร้าง'); }
-function sendAllPayslips() { alert('ฟังก์ชัน "ส่งสลิปทั้งหมดทางอีเมล" ยังไม่ได้ถูกสร้าง'); }
+    employees.forEach(emp => {
+        const empTimeRecords = timeRecords.filter(record => {
+            const [day, recordMonth, recordYearSuffix] = record.date.split('/');
+            if (!recordMonth || !recordYearSuffix) return false;
+            const recordYear = `20${recordYearSuffix}`;
+            return record.id === emp.id && recordMonth == month && recordYear == year;
+        });
 
-// --- Reports (Tab 6) ---
-function updateReportSummary() {
-    document.getElementById('totalEmployees').textContent = employees.length;
-    // ... more summary calculations
+        // ▼▼▼ จุดแก้ไขที่ 1: นับจำนวนวันทำงานจากข้อมูลที่กรองได้ ▼▼▼
+        let totalWorkDays = empTimeRecords.length;
+        let totalWorkHours = 0;
+        let totalOtHours = 0;
+
+        empTimeRecords.forEach(record => {
+            if (record.timeIn && record.timeOut && record.timeIn !== record.timeOut) {
+                const timeIn = new Date(`1970-01-01T${record.timeIn}`);
+                const timeOut = new Date(`1970-01-01T${record.timeOut}`);
+                let workHours = (timeOut - timeIn) / 3600000;
+                if (workHours < 0) workHours += 24;
+
+                // ▼▼▼ จุดแก้ไขที่ 2: บวกชั่วโมงทำงานรวมในแต่ละรอบ ▼▼▼
+                totalWorkHours += workHours;
+
+                if (workHours > 8) {
+                    totalOtHours += (workHours - 8);
+                }
+            }
+        });
+
+        const salary = parseFloat(emp.salary);
+        const grossSalary = (emp.type === 'monthly') ? salary : salary * totalWorkDays;
+        const hourlyRate = (emp.type === 'monthly' ? salary / 30 : salary) / 8;
+        const otPay = totalOtHours * hourlyRate * 1.5;
+        const totalSalary = grossSalary + otPay;
+
+        payrollResults.push({
+            id: emp.id,
+            name: emp.name,
+            workDays: totalWorkDays, // <-- ค่านี้จะถูกต้องแล้ว
+            workHours: totalWorkHours, // <-- ค่านี้จะถูกต้องแล้ว
+            otHours: totalOtHours,
+            grossSalary,
+            otPay,
+            totalSalary
+        });
+    });
+
+    updateReportTable();
+    updateReportSummary();
+    alert('คำนวณเงินเดือนและอัปเดตรายงานเรียบร้อย!');
 }
+
+// --- 8. Reports ---
+function updateReportSummary() {
+    const totalEmployeesElem = document.getElementById('totalEmployees');
+    const totalSalaryElem = document.getElementById('totalSalary');
+    const totalOTElem = document.getElementById('totalOT');
+    const avgWorkDaysElem = document.getElementById('avgWorkDays');
+    if (totalEmployeesElem) totalEmployeesElem.textContent = `${employees.length} คน`;
+    const totalSalary = payrollResults.reduce((sum, r) => sum + r.totalSalary, 0);
+    const totalOT = payrollResults.reduce((sum, r) => sum + r.otHours, 0);
+    const totalDays = payrollResults.reduce((sum, r) => sum + r.workDays, 0);
+    const avgDays = employees.length > 0 ? (totalDays / employees.length) : 0;
+    if (totalSalaryElem) totalSalaryElem.textContent = `${totalSalary.toLocaleString('th-TH', {minimumFractionDigits: 2})} บาท`;
+    if (totalOTElem) totalOTElem.textContent = `${totalOT.toFixed(2)} ชม.`;
+    if (avgWorkDaysElem) avgWorkDaysElem.textContent = `${avgDays.toFixed(1)} วัน`;
+}
+
 function updateReportTable() {
     const tableBody = document.getElementById('reportTable');
-    tableBody.innerHTML = '<tr><td colspan="9">คำนวณเงินเดือนก่อนเพื่อดูรายงาน</td></tr>';
+    if (!tableBody) return;
+    tableBody.innerHTML = '';
+    if (payrollResults.length === 0) {
+        tableBody.innerHTML = `<tr><td colspan="9">ยังไม่มีข้อมูลการคำนวณ</td></tr>`; // เพิ่ม colspan เป็น 9
+        return;
+    }
+    payrollResults.forEach(result => {
+        const row = tableBody.insertRow();
+        // เพิ่มคอลัมน์ใหม่สำหรับปุ่ม
+        row.innerHTML = `
+            <td>${result.id}</td><td>${result.name}</td>
+            <td>${result.workDays}</td><td>${result.workHours.toFixed(2)}</td>
+            <td>${result.otHours.toFixed(2)}</td>
+            <td>${result.grossSalary.toLocaleString('th-TH')}</td>
+            <td>${result.otPay.toFixed(2)}</td>
+            <td><strong>${result.totalSalary.toLocaleString('th-TH', {minimumFractionDigits: 2})}</strong></td>
+            <td><button class="btn-payslip" onclick="generatePayslip('${result.id}')">📄 ดูสลิป</button></td>
+        `;
+    });
 }
-function exportReport() { alert('ฟังก์ชัน "ส่งออกรายงาน Excel" ยังไม่ได้ถูกสร้าง'); }
-function printReport() { alert('ฟังก์ชัน "พิมพ์รายงาน" ยังไม่ได้ถูกสร้าง'); }
+
+//=================================================================
+// 9. Payslip Generation: ฟังก์ชันใหม่สำหรับสร้างสลิป PDF
+// =================================================================
+function generatePayslip(employeeId) {
+    const { jsPDF } = window.jspdf;
+    const result = payrollResults.find(r => r.id === employeeId);
+    const employee = employees.find(e => e.id === employeeId);
+
+    if (!result || !employee) {
+        alert("ไม่พบข้อมูลสำหรับสร้างสลิปของพนักงานรหัส: " + employeeId);
+        return;
+    }
+
+    const doc = new jsPDF();
+    const payrollMonth = document.getElementById('payrollMonth').value;
+    const [year, month] = payrollMonth.split('-');
+    const issueDate = new Date().toLocaleDateString('th-TH');
+
+    // --- ตั้งค่า Font (สำคัญมากสำหรับภาษาไทย) ---
+    // หมายเหตุ: jsPDF ไม่รองรับภาษาไทยโดยตรง เราจะใช้วิธีแสดงผลเป็นภาษาอังกฤษ
+    // หากต้องการภาษาไทยสมบูรณ์ จะต้องใช้ library เพิ่มเติมเช่น "jspdf-autotable" พร้อม font ภาษาไทย
+    
+    // --- Header ---
+    doc.setFontSize(18);
+    doc.text("Payslip / สลิปเงินเดือน", 105, 20, { align: 'center' });
+    doc.setFontSize(12);
+    doc.text("Your Company Name", 105, 30, { align: 'center' });
+
+    // --- Employee Info ---
+    doc.setFontSize(10);
+    doc.text(`Period: ${month}/${year}`, 14, 45);
+    doc.text(`Issue Date: ${issueDate}`, 14, 50);
+    
+    doc.text(`Employee ID: ${employee.id}`, 140, 45);
+    doc.text(`Name: ${employee.name}`, 140, 50);
+
+    // --- Earnings ---
+    doc.line(14, 60, 196, 60); // เส้นคั่น
+    doc.setFontSize(14);
+    doc.text("Earnings (รายรับ)", 14, 68);
+    doc.setFontSize(12);
+    doc.autoTable({
+        startY: 72,
+        head: [['Description', 'Amount (THB)']],
+        body: [
+            ['Basic Salary', result.grossSalary.toFixed(2)],
+            ['Overtime (OT) Pay', result.otPay.toFixed(2)],
+        ],
+        theme: 'plain',
+        styles: { fontSize: 12 },
+        headStyles: { fontStyle: 'bold' }
+    });
+
+    // --- Deductions (ตัวอย่าง) ---
+    let finalY = doc.lastAutoTable.finalY + 10;
+    doc.setFontSize(14);
+    doc.text("Deductions (รายการหัก)", 14, finalY);
+    doc.setFontSize(12);
+    doc.autoTable({
+        startY: finalY + 4,
+        head: [['Description', 'Amount (THB)']],
+        body: [
+            ['Social Security', '0.00'], // Placeholder
+            ['Tax', '0.00'], // Placeholder
+        ],
+        theme: 'plain',
+        styles: { fontSize: 12 },
+        headStyles: { fontStyle: 'bold' }
+    });
+
+    // --- Summary ---
+    finalY = doc.lastAutoTable.finalY + 10;
+    const totalEarnings = result.grossSalary + result.otPay;
+    const totalDeductions = 0.00; // Placeholder
+    
+    doc.setFontSize(14);
+    doc.setFont('helvetica', 'bold');
+    doc.text("Net Salary (ยอดสุทธิ)", 140, finalY, { align: 'right' });
+    doc.text(`${result.totalSalary.toFixed(2)} THB`, 196, finalY, { align: 'right' });
+
+    // --- Save File ---
+    doc.save(`payslip-${employee.id}-${payrollMonth}.pdf`);
+}
+
+function exportReport() { alert('ฟังก์ชันส่งออกรายงานยังไม่ถูกสร้าง'); }
+function printReport() { alert('ฟังก์ชันพิมพ์รายงานยังไม่ถูกสร้าง'); }
+function loadSampleEmployees() { alert('ฟังก์ชันโหลดข้อมูลตัวอย่างยังไม่ถูกสร้าง'); }
