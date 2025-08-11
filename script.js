@@ -101,36 +101,115 @@ function showTab(tabName, clickedButton) {
     if (clickedButton) clickedButton.classList.add('active');
 }
 
+// script.js (แก้ไขฟังก์ชันนี้ให้ถูกต้อง)
+
+function updateTimeRecordsTable() {
+    const displayDiv = document.getElementById('timeRecordsDisplay');
+    if (!displayDiv) return;
+
+    // สร้างตารางและส่วนหัว (Header)
+    let tableHtml = `
+        <h3>ข้อมูลดิบจากไฟล์ CSV (ประมวลผลแล้ว)</h3>
+        <table class="styled-table">
+            <thead>
+                <tr>
+                    <th>รหัสพนักงาน</th>
+                    <th>วันที่</th>
+                    <th>เวลาเข้า</th>
+                    <th>เวลาออก</th>
+                    <th>จำนวนสแกน</th>
+                </tr>
+            </thead>
+            <tbody>
+    `;
+
+    // ถ้าไม่มีข้อมูล ให้แสดงข้อความ
+    if (timeRecords.length === 0) {
+        tableHtml += `<tr><td colspan="5">กรุณาอัปโหลดไฟล์ CSV เพื่อดูข้อมูล</td></tr>`;
+    } else {
+        // วนลูปสร้างแต่ละแถวของข้อมูล
+        timeRecords.forEach(rec => {
+            tableHtml += `
+                <tr>
+                    <td>${rec.id}</td>
+                    <td>${rec.date}</td>
+                    
+                    <td><strong>${rec.timeIn}</strong></td>  
+                    <td><strong>${rec.timeOut}</strong></td>
+                    <td>${rec.scanCount} ครั้ง</td>
+                </tr>
+            `;
+        });
+    }
+
+    tableHtml += `</tbody></table>`;
+    displayDiv.innerHTML = tableHtml;
+}
 // --- 5. CSV Upload ---
+
 function handleFileUpload(input) {
     const file = input.files[0];
     if (!file) return;
+
     Papa.parse(file, {
-        header: true, skipEmptyLines: true,
+        header: true,
+        skipEmptyLines: true,
         complete: function(results) {
+            // ค้นหา Header แบบยืดหยุ่น
             const findHeader = (fields, names) => fields.find(h => h && names.includes(h.trim().toLowerCase()));
-            const idHeader = findHeader(results.meta.fields, ['sjobno']);
+            
+            // ใช้ชื่อ header จากไฟล์จริง 'sJobNo', 'Date', 'Time'
+            const idHeader = findHeader(results.meta.fields, ['sjobno']); 
             const dateHeader = findHeader(results.meta.fields, ['date']);
             const timeHeader = findHeader(results.meta.fields, ['time']);
-            if (!idHeader || !dateHeader || !timeHeader) { alert('ไฟล์ CSV ไม่ถูกต้อง!'); return; }
+
+            if (!idHeader || !dateHeader || !timeHeader) {
+                alert('ไฟล์ CSV ไม่ถูกต้อง! ไม่พบ Header sJobNo, Date, หรือ Time');
+                return;
+            }
+
             const dailyRecords = {};
             results.data.forEach(scan => {
-                const id = scan[idHeader]; const date = scan[dateHeader]; const time = scan[timeHeader];
+                const id = scan[idHeader];
+                const date = scan[dateHeader];
+                const time = scan[timeHeader];
+
+                // ตรวจสอบข้อมูลสำคัญ
                 if (!id || id.trim() === '0' || !date || !time) return;
+
                 const key = `${id}-${date}`;
-                if (!dailyRecords[key]) { dailyRecords[key] = { id, date, times: [time] };}
-                else { dailyRecords[key].times.push(time); }
+                if (!dailyRecords[key]) {
+                    dailyRecords[key] = {
+                        id,
+                        date,
+                        times: [] // เปลี่ยนชื่อเป็น times ให้สื่อความหมาย
+                    };
+                }
+                dailyRecords[key].times.push(time);
             });
+
+            // ประมวลผลเวลาเข้า-ออกที่ถูกต้อง
             timeRecords = Object.values(dailyRecords).map(rec => {
-                rec.times.sort();
-                rec.timeIn = rec.times[0];
-                rec.timeOut = rec.times[rec.times.length - 1];
-                return rec;
+                rec.times.sort(); // เรียงลำดับเวลาจากน้อยไปมาก
+                const timeIn = rec.times[0];
+                const timeOut = (rec.times.length > 1) ? rec.times[rec.times.length - 1] : timeIn;
+                
+                return {
+                    id: rec.id,
+                    date: rec.date,
+                    timeIn: timeIn,   // เวลาเข้าที่ถูกต้อง
+                    timeOut: timeOut, // เวลาออกที่ถูกต้อง
+                    scanCount: rec.times.length
+                };
             });
-            alert(`อัปโหลดสำเร็จ! พบข้อมูล ${timeRecords.length} รายการ`);
+
+            alert(`อัปโหลดสำเร็จ! พบข้อมูลการทำงาน ${timeRecords.length} รายการ`);
+            updateTimeRecordsTable();
         }
     });
 }
+
+
 
 // --- 6. Employee Management ---
 async function addEmployee() {
@@ -198,15 +277,20 @@ function calculatePayroll() {
     payrollResults = [];
 
     employees.forEach(emp => {
+        // กรองข้อมูลเวลาของพนักงานในเดือนที่เลือก
         const empTimeRecords = timeRecords.filter(record => {
-            const [day, recordMonth, recordYearSuffix] = record.date.split('/');
-            if (!recordMonth || !recordYearSuffix) return false;
-            const recordYear = `20${recordYearSuffix}`;
-            return record.id === emp.id && recordMonth == month && recordYear == year;
+            // การแปลงรูปแบบวันที่ 'd/M/yyyy' เป็น 'yyyy-MM' เพื่อเปรียบเทียบ
+            const dateParts = record.date.split('/');
+            if (dateParts.length !== 3) return false;
+            // สร้างปีเต็มจาก 2 หลักสุดท้าย เช่น 25 -> 2025
+            const recordYear = `20${dateParts[2]}`; 
+            const recordMonth = dateParts[1].padStart(2, '0');
+            
+            return record.id === emp.id && recordMonth === month && recordYear === year;
         });
-
-        // ▼▼▼ จุดแก้ไขที่ 1: นับจำนวนวันทำงานจากข้อมูลที่กรองได้ ▼▼▼
-        let totalWorkDays = empTimeRecords.length;
+        
+        // ใช้ข้อมูลที่กรองได้มาคำนวณโดยตรง
+        const totalWorkDays = empTimeRecords.length;
         let totalWorkHours = 0;
         let totalOtHours = 0;
 
@@ -215,11 +299,11 @@ function calculatePayroll() {
                 const timeIn = new Date(`1970-01-01T${record.timeIn}`);
                 const timeOut = new Date(`1970-01-01T${record.timeOut}`);
                 let workHours = (timeOut - timeIn) / 3600000;
-                if (workHours < 0) workHours += 24;
+                if (workHours < 0) workHours += 24; // กรณีข้ามคืน
 
-                // ▼▼▼ จุดแก้ไขที่ 2: บวกชั่วโมงทำงานรวมในแต่ละรอบ ▼▼▼
                 totalWorkHours += workHours;
 
+                // คำนวณ OT หากทำงานเกิน 8 ชม. ต่อวัน
                 if (workHours > 8) {
                     totalOtHours += (workHours - 8);
                 }
@@ -235,8 +319,8 @@ function calculatePayroll() {
         payrollResults.push({
             id: emp.id,
             name: emp.name,
-            workDays: totalWorkDays, // <-- ค่านี้จะถูกต้องแล้ว
-            workHours: totalWorkHours, // <-- ค่านี้จะถูกต้องแล้ว
+            workDays: totalWorkDays,
+            workHours: totalWorkHours,
             otHours: totalOtHours,
             grossSalary,
             otPay,
