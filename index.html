@@ -483,14 +483,45 @@
         }
 
         function loadSampleEmployees() {
-            employees = [
-                { id: '35', name: 'Ton Yy', salary: 30000, type: 'monthly', email: 'ton@company.com', account: '111-2-33333-4' },
-                { id: '34', name: 'Seasakun Phoraya', salary: 25000, type: 'monthly', email: 'seasakun@company.com', account: '111-2-44444-5' },
-                { id: '26', name: 'Thanakorn Khotchompoo', salary: 450, type: 'daily', email: 'thanakorn@company.com', account: '111-2-55555-6' }
-            ];
-            updateEmployeeTable();
-            showMessage('employees', 'โหลดข้อมูลตัวอย่าง 3 พนักงานเรียบร้อย', 'success');
-        }
+    // ข้อมูลพนักงานชุดใหม่ พร้อมรหัสสำหรับสแกน (scanId)
+    const updatedEmployees = [
+        { id: 'CR001', name: 'Onpreeya Rueankaew (Namfon)', scanId: '8', salary: 35000, type: 'monthly', email: 'Onpreeya31042@gmail.com', account: '0708725439' },
+        { id: 'CR002', name: 'Watharaphong Bosong (Mark)', scanId: '5', salary: 12000, type: 'monthly', email: 'Watcharapong.mankvisiong@gmail.com', account: '3432500852' },
+        { id: 'CR003', name: 'Thanapon Ratchanahun (Rung)', scanId: '39', salary: 15000, type: 'monthly', email: 'rang147963258@gmail.com', account: '7520352927' },
+        { id: 'CR004', name: 'Chokdee Butto (Ta)', scanId: '14', salary: 26000, type: 'monthly', email: 'chokdeebutto0996060086@gmail.com', account: '0203880952' },
+        { id: 'CR005', name: 'Khwanruedee Maithong (Lek)', scanId: '12', salary: 12000, type: 'monthly', email: 'bbnn24831@gmail.com', account: '9770522259' },
+        { id: 'CR006', name: 'YY Ton (Na)', scanId: '35', salary: 350, type: 'daily', email: 'yyton415@gmail.com', account: '7017076881' },
+        { id: 'CR007', name: 'Seasakul Phoraya (Ning)', scanId: '34', salary: 350, type: 'daily', email: 'kunnutt98@gmail.com', account: '0861348393' },
+        { id: 'CR008', name: 'Wannisa Thatsarach (Fern)', scanId: '38', salary: 350, type: 'daily', email: 'thefernloveeddy@gmail.com', account: '0541997482' },
+        { id: 'CR009', name: 'Thitikorn Orachai (Rose)', scanId: '32', salary: 350, type: 'daily', email: 'Thitikornorachai@gmail.com', account: '4089885633' },
+        { id: 'CR010', name: 'Siriporn Yaisomboon (Fang)', scanId: '41', salary: 350, type: 'daily', email: 'ff0644186719@gmail.com', account: '4191642905' },
+        { id: 'CR011', name: 'Wiphawee Thintawee (Aum)', scanId: '7', salary: 350, type: 'daily', email: 'awiphawee.thin@gmail.com', account: '1258905802' },
+        { id: 'CR012', name: 'Kittaya Waehum (Augoon)', scanId: '37', salary: 350, type: 'daily', email: 'kvtyawachum@gmail.com', account: '6042744705' },
+        { id: 'CR013', name: 'Apidet Intaraksa (Leng)', scanId: '20', salary: 750, type: 'daily', email: 'Apidet.intaraksa02@gmail.com', account: '1668747872' },
+        { id: 'CR014', name: 'Methasit Yodsra (Mo)', scanId: '_N/A_', salary: 300, type: 'daily', email: 'MaytasitN.1@gmail.com', account: '4191225614' },
+        { id: 'CR015', name: 'Cristian Andrade (Cris)', scanId: '_N/A_', salary: 150000, type: 'monthly', email: 'Cristian9landraade@gmail.com', account: '8402159380' },
+        { id: 'CR016', name: 'Kanyanat Chayngam (Praew)', scanId: '_N/A_', salary: 16000, type: 'monthly', email: 'Praewkanyanat2536@gmail.com', account: '0673781322' },
+        { id: 'CR017', name: 'Tripop Tassarat (M)', scanId: '3', salary: 12000, type: 'monthly', email: 'aempop.25452945@gmail.com', account: '8632344591' },
+        { id: 'CR018', name: 'Tanapon Muangsri (Mark)', scanId: '25', salary: 10000, type: 'monthly', email: 'Tanapoll.mm@gmail.com', account: '1343979173' },
+        { id: 'CR019', name: 'Danai Aimthem (Tom)', scanId: '40', salary: 10000, type: 'monthly', email: 'Tomkhung95792@gmail.com', account: '1348116378' },
+        { id: 'CR020', name: 'Oliver Faust (Oliver)', scanId: '10', salary: 12000, type: 'monthly', email: 'Socioty765899@gmail.com', account: '6760253564' },
+        { id: 'CR021', name: 'Nusorn Aimtem (Tam)', scanId: '31', salary: 10000, type: 'monthly', email: 'Nusrnxitem@gmail.com', account: '6512384121' },
+        { id: 'CR022', name: 'Patipan Pinunoi (ice)', scanId: '_N/A_', salary: 350, type: 'daily', email: 'pinijnoip@gmail.com', account: '1098672881' },
+        { id: 'CR023', name: 'Chanthawong Promsorn (Jom)', scanId: '_N/A_', salary: 350, type: 'daily', email: 'Chanthawong0301@gmail.com', account: '1098672881' },
+        { id: 'CR024', name: 'Jetsadaporn Pantong (nine)', scanId: '_N/A_', salary: 15000, type: 'monthly', email: 'ninne3466@gmail.com', account: '4321053285' },
+        { id: 'CR025', name: 'Wipaporn Chumphoochanaphai (Aun)', scanId: '_N/A_', salary: 350, type: 'daily', email: 'aunwipaporn14@gmail.com', account: '7310648862' },
+        { id: 'CR026', name: 'Narongsak Nakanukro (Maew)', scanId: '_N/A_', salary: 350, type: 'daily', email: 'maewza0094@gmail.com', account: '7310648862' },
+        { id: 'CR027', name: 'Tanapat Khamphinee (nut)', scanId: '_N/A_', salary: 400, type: 'daily', email: 'Thanpat090945@gmail.com', account: '7017067674' },
+        { id: 'CR028', name: 'Thittaya Bhuddachinorossakul (Kitty)', scanId: '_N/A_', salary: 50000, type: 'monthly', email: 'Kitty.ceresagrotech@gmail.com', account: '0073795451' },
+        { id: 'CR029', name: 'Phakhaphon Butyut (Dew)', scanId: '_N/A_', salary: 350, type: 'daily', email: 'Phakhaphonbutyut@gmail.com', account: '1528998972' },
+        { id: 'CR030', name: 'Kanjana Narod (anpun)', scanId: '_N/A_', salary: 350, type: 'daily', email: 'Kanjananarod37@gmail.com', account: '0881939150' }
+    ];
+    
+    employees = [...updatedEmployees];
+    updateEmployeeTable();
+    saveEmployeesToLocal();
+    showMessage('employees', 'อัปเดตข้อมูลพนักงาน 30 คน (พร้อมรหัสสแกน) เรียบร้อย', 'success');
+}
 
         // --- Payroll Calculation ---
         // *** แก้ไขฟังก์ชัน calculatePayroll ทั้งหมด ***
@@ -515,8 +546,8 @@
             
             employees.forEach(emp => {
                 const empTimeRecords = timeRecords.filter(record => {
-                    if (record.id !== emp.id || !record.date || !record.date.includes('/')) {
-                        return false;
+                    if (record.id !== emp.scanId || !record.date || !record.date.includes('/')) {
+                    return false;
                     }
                     
                     const dateParts = record.date.split('/');
