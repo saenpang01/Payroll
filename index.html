@@ -3,29 +3,21 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>ระบบการทำเงินเดือนอัตโนมัติ</title>
+    <title>ระบบคำนวณเวลาทำงานและ OT</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.3.0/papaparse.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
-    <script src="https://www.gstatic.com/firebasejs/9.6.1/firebase-app-compat.js"></script>
-    <script src="https://www.gstatic.com/firebasejs/9.6.1/firebase-firestore-compat.js"></script>
-    <script src="https://www.gstatic.com/firebasejs/9.6.1/firebase-auth-compat.js"></script>
     <link rel="stylesheet" href="style.css">
     
 </head>
 <body>
     <div class="container">
         <div class="header">
-            <h1>🏢 ระบบการทำเงินเดือนอัตโนมัติ</h1>
-            <p>ระบบจัดการเงินเดือนที่ครบครันและทันสมัย</p>
+            <h1>🏢 ระบบคำนวณเวลาทำงานและ OT</h1>
+            <p>อัปโหลดไฟล์เวลาทำงานเพื่อคำนวณชั่วโมงทำงานและ OT</p>
         </div>
         
         <div class="tabs">
-            <button class="tab active" onclick="showTab('upload', this)">📁 อัปโหลดข้อมูล</button>
-            <button class="tab" onclick="showTab('employees', this)">👥 จัดการพนักงาน</button>
-            <button class="tab" onclick="showTab('calculate', this)">💰 คำนวณเงินเดือน</button>
-            <button class="tab" onclick="showTab('payroll', this)">🏦 ไฟล์ธนาคาร</button>
-            <button class="tab" onclick="showTab('payslips', this)">📄 สลิปเงินเดือน</button>
-            <button class="tab" onclick="showTab('reports', this)">📊 รายงาน</button>
+            <button class="tab active" onclick="showTab('upload', this)">📁 อัปโหลดและคำนวณ</button>
+            <button class="tab" onclick="showTab('reports', this)">📊 รายงานรายบุคคล</button>
         </div>
         
         <div id="upload" class="tab-content active">
@@ -40,699 +32,442 @@
             </div>
             
             <div id="uploadProgress" class="progress-container hidden">
-                <div class="progress-bar">
-                    <div id="progressFill" class="progress-fill"></div>
-                </div>
+                <div class="progress-bar"><div id="progressFill" class="progress-fill"></div></div>
                 <p id="progressText">กำลังประมวลผล...</p>
             </div>
             
             <div id="uploadResult"></div>
-        </div>
-        
-        <div id="employees" class="tab-content">
-            <div class="form-grid">
-                <div class="form-group">
-                    <label>รหัสพนักงาน:</label>
-                    <input type="text" id="empId" placeholder="EMP001">
-                </div>
-                <div class="form-group">
-                    <label>ชื่อพนักงาน:</label>
-                    <input type="text" id="empName" placeholder="นายสมชาย ใจดี">
-                </div>
-                <div class="form-group">
-                    <label>ประเภทพนักงาน:</label>
-                    <select id="empType">
-                        <option value="monthly">รายเดือน</option>
-                        <option value="daily">รายวัน</option>
-                    </select>
-                </div>
-                <div class="form-group">
-                    <label>เงินเดือน/ค่าแรงต่อวัน:</label>
-                    <input type="number" id="empSalary" placeholder="30000">
-                </div>
-                <div class="form-group">
-                    <label>อีเมล:</label>
-                    <input type="email" id="empEmail" placeholder="employee@company.com">
-                </div>
-                <div class="form-group">
-                    <label>เลขบัญชีธนาคาร:</label>
-                    <input type="text" id="empAccount" placeholder="123-4-56789-0">
-                </div>
+
+            <div id="calculationSection" class="hidden" style="margin-top: 2rem;">
+                 <h3>🧮 คำนวณข้อมูลตามช่วงวันที่</h3>
+                 <div class="form-grid">
+                    <div class="form-group">
+                        <label>จากวันที่:</label>
+                        <input type="date" id="calc_start_date">
+                    </div>
+                    <div class="form-group">
+                        <label>ถึงวันที่:</label>
+                        <input type="date" id="calc_end_date">
+                    </div>
+                     <div class="form-group">
+                        <label>อัตรา OT (บาท/ชั่วโมง):</label>
+                        <input type="number" id="otRate" value="50" min="0">
+                    </div>
+                 </div>
+                 <button class="btn" onclick="calculateAndDisplaySummary()">คำนวณและแสดงสรุป</button>
+                 <div id="calculationResult" class="table-container" style="margin-top: 1rem;"></div>
             </div>
-            
-            <div class="form-group">
-                <label>เวลาทำงานมาตรฐาน:</label>
-                <div style="display: flex; gap: 10px; align-items: center; flex-wrap: wrap;">
-                    <input type="time" id="workStart" value="08:00">
-                    <span>ถึง</span>
-                    <input type="time" id="workEnd" value="17:00">
-                    <span>พักเที่ยง</span>
-                    <input type="number" id="lunchBreak" value="60" min="0" max="120" style="width: 80px;">
-                    <span>นาที</span>
-                </div>
-            </div>
-            
-            <div style="margin-bottom: 20px;">
-                <button class="btn" onclick="addEmployee()">➕ เพิ่มพนักงาน</button>
-                <button class="btn btn-secondary" onclick="loadSampleEmployees()">📋 โหลดข้อมูลตัวอย่าง</button>
-            </div>
-            
-            <div class="table-container">
-                <table>
-                    <thead>
-                        <tr>
-                            <th>รหัส</th>
-                            <th>ชื่อ</th>
-                            <th>ประเภท</th>
-                            <th>เงินเดือน/วัน</th>
-                            <th>อีเมล</th>
-                            <th>เลขบัญชี</th>
-                            <th>การจัดการ</th>
-                        </tr>
-                    </thead>
-                    <tbody id="employeeTableBody">
-                    </tbody>
-                </table>
-            </div>
-        </div>
-        
-        <div id="calculate" class="tab-content">
-            <div class="form-grid">
-                <div class="form-group">
-                    <label>เลือกเดือน:</label>
-                    <input type="month" id="calculate_month" value="">
-                </div>
-                <div class="form-group">
-                    <label>อัตรา OT (ต่อชั่วโมง):</label>
-                    <input type="number" id="otRate" value="50" min="0">
-                </div>
-                <div class="form-group">
-                    <label>วันหยุดประจำสัปดาห์:</label>
-                    <select id="weekendDays" multiple>
-                        <option value="0">อาทิตย์</option>
-                        <option value="1">จันทร์</option>
-                        <option value="2">อังคาร</option>
-                        <option value="3">พุธ</option>
-                        <option value="4">พฤหัสบดี</option>
-                        <option value="5">ศุกร์</option>
-                        <option value="6" selected>เสาร์</option>
-                    </select>
-                </div>
-            </div>
-            
-            <div style="margin-bottom: 20px;">
-                <button class="btn" onclick="calculatePayroll()">🧮 คำนวณเงินเดือนทั้งหมด</button>
-                <button class="btn btn-success" onclick="exportCalculation()">📊 ส่งออกผลการคำนวณ</button>
-            </div>
-            
-            <div id="calculationResult"></div>
-        </div>
-        
-        <div id="payroll" class="tab-content">
-            <div class="form-grid">
-                <div class="form-group">
-                    <label>ธนาคาร:</label>
-                    <select id="bankType">
-                        <option value="kbank">กสิกรไทย</option>
-                        <option value="scb">ไทยพาณิชย์</option>
-                        <option value="bbl">กรุงเทพ</option>
-                        <option value="tmb">ทหารไทยธนชาต</option>
-                        <option value="ktb">กรุงไทย</option>
-                        <option value="generic">รูปแบบทั่วไป</option>
-                    </select>
-                </div>
-                <div class="form-group">
-                    <label>บัญชีบริษัท:</label>
-                    <input type="text" id="companyAccount" placeholder="123-4-56789-0">
-                </div>
-                <div class="form-group">
-                    <label>ชื่อบริษัท:</label>
-                    <input type="text" id="companyName" placeholder="บริษัท ABC จำกัด">
-                </div>
-            </div>
-            
-            <div style="margin-bottom: 20px;">
-                <button class="btn" onclick="generateBankFile()">🏦 สร้างไฟล์สำหรับธนาคาร</button>
-                <button class="btn btn-secondary" onclick="previewBankFile()">👁️ ดูตัวอย่างไฟล์</button>
-            </div>
-            
-            <div id="bankFileResult"></div>
-        </div>
-        
-        <div id="payslips" class="tab-content">
-            <div class="form-grid">
-                <div class="form-group">
-                    <label>เทมเพลตสลิป:</label>
-                    <select id="payslipTemplate">
-                        <option value="standard">มาตรฐาน</option>
-                        <option value="detailed">รายละเอียด</option>
-                        <option value="simple">เรียบง่าย</option>
-                    </select>
-                </div>
-                <div class="form-group">
-                    <label>โลโก้บริษัท (URL):</label>
-                    <input type="url" id="companyLogo" placeholder="https://example.com/logo.png">
-                </div>
-                <div class="form-group">
-                    <label>ที่อยู่บริษัท:</label>
-                    <textarea id="companyAddress" rows="3" placeholder="123 ถนนสุขุมวิท แขวงคลองตัน เขตคลองตัน กรุงเทพฯ 10110"></textarea>
-                </div>
-            </div>
-            
-            <div class="form-group">
-                <label>
-                    <input type="checkbox" id="autoEmail" checked>
-                    ส่งอีเมลอัตโนมัติให้พนักงานทั้งหมด
-                </label>
-            </div>
-            
-            <div style="margin-bottom: 20px;">
-                <button class="btn" onclick="generatePayslips()">📄 สร้างสลิปเงินเดือนทั้งหมด</button>
-                <button class="btn btn-success" onclick="sendAllPayslips()">📧 ส่งสลิปทั้งหมดทางอีเมล</button>
-            </div>
-            
-            <div id="payslipResult"></div>
         </div>
         
         <div id="reports" class="tab-content">
-            <h3>💰 คำนวณและดูรายงาน</h3>
+            <h3>📈 ดูเวลาทำงานรายบุคคล</h3>
             <div class="form-grid">
                 <div class="form-group">
-                    <label>สำหรับเดือน:</label>
-                    <input type="month" id="report_month">
+                    <label>เลือกพนักงาน:</label>
+                    <select id="report_employee_select" class="form-control"></select>
+                </div>
+                <div class="form-group">
+                    <label>จากวันที่:</label>
+                    <input type="date" id="report_start_date" class="form-control">
+                </div>
+                <div class="form-group">
+                    <label>ถึงวันที่:</label>
+                    <input type="date" id="report_end_date" class="form-control">
                 </div>
                 <div class="form-group" style="align-self: flex-end;">
-                     <button class="btn" onclick="calculatePayroll()">คำนวณและสร้างรายงาน</button>
+                     <button class="btn" onclick="generateIndividualReport()">🔍 แสดงผล</button>
                 </div>
             </div>
             <hr>
-            <div class="report-summary">
-                 <div class="card"><h3>พนักงานทั้งหมด</h3><div class="value" id="totalEmployees">0 คน</div></div>
-                 <div class="card"><h3>ยอดจ่ายรวม</h3><div class="value" id="totalSalary">0.00 บาท</div></div>
-                 <div class="card"><h3>OT รวม</h3><div class="value" id="totalOT">0 ชม.</div></div>
-                 <div class="card"><h3>วันทำงานเฉลี่ย</h3><div class="value" id="avgWorkDays">0 วัน</div></div>
-            </div>
-            
-            <div class="table-container">
-                <h3>📊 สรุปข้อมูลพนักงานรายคน</h3>
-                <table>
-                    <thead>
-                        <tr>
-                            <th>รหัส</th>
-                            <th>ชื่อ</th>
-                            <th>วันทำงาน</th>
-                            <th>ชม.ทำงาน</th>
-                            <th>ชม.OT</th>
-                            <th>เงินเดือน</th>
-                            <th>ค่าOT</th>
-                            <th>เงินรวม</th>
-                            <th>การจัดการ</th>
-                        </tr>
-                    </thead>
-                    <tbody id="reportTable">
-                        </tbody>
-                </table>
-            </div>
+            <div id="individualReportResult" class="table-container">
+                </div>
         </div>
     </div>
 
     <script>
-        // Global state
-        let employees = [];
-        let timeRecords = [];
-        let payrollResults = [];
+        // --- Global State ---
+        let employees = []; // ข้อมูลพนักงานจะถูกดึงจาก Google Sheet
+        let timeRecords = []; // ข้อมูลเวลาดิบที่ถูกประมวลผลแล้ว
 
-        // --- Tab Management ---
-        function showTab(tabName, clickedButton) {
-            document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
-            document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
-            const tabContent = document.getElementById(tabName);
-            if (tabContent) tabContent.classList.add('active');
-            if (clickedButton) clickedButton.classList.add('active');
-            if (tabName === 'employees') {
-                updateEmployeeTable();
-            } else if (tabName === 'reports') {
-                updateReportSummary();
-            }
+        // --- Core Application Logic ---
+
+        // 1. [เพิ่มใหม่] ฟังก์ชันสำหรับดึงข้อมูลพนักงานจาก Google Sheet
+       async function fetchAllEmployeesFromGoogleSheet() {
+    const monthlySheetURL = 'https://docs.google.com/spreadsheets/d/e/2PACX-1vTPeXCWESqvqiaslhR8j-YvPBsPUi8RGDX8GKJ9w4XrUSbjrp2OotRG9zFz2oRdIFooVk7RVVKTD1cL/pub?gid=166039384&single=true&output=csv';
+    const dailySheetURL = 'https://docs.google.com/spreadsheets/d/e/2PACX-1vTPeXCWESqvqiaslhR8j-YvPBsPUi8RGDX8GKJ9w4XrUSbjrp2OotRG9zFz2oRdIFooVk7RVVKTD1cL/pub?gid=1323019072&single=true&output=csv';
+
+    const processSheetData = (csvText, employeeType) => {
+        const result = Papa.parse(csvText, { header: true, skipEmptyLines: true });
+        const data = result.data;
+        const fields = result.meta.fields;
+
+        // --- ส่วนที่แก้ไข ---
+        // ค้นหา key ของ scanId แบบไม่สนตัวพิมพ์ใหญ่/เล็ก และช่องว่าง
+        const scanIdKey = fields.find(f => f && f.trim().toLowerCase() === 'scanid');
+
+        if (!scanIdKey) {
+            console.error(`ไม่พบคอลัมน์ 'scanid' ในชีตของพนักงานประเภท: ${employeeType}`);
+            return [];
         }
 
-        // --- File Upload ---
-        function handleFileUpload(input) {
-            const file = input.files[0];
-            if (!file) return;
+        return data.map(emp => {
+            // สร้าง object ใหม่ที่สะอาดและมี property 'scanId' ที่ถูกต้อง
+            return {
+                ...emp,
+                scanId: emp[scanIdKey] ? emp[scanIdKey].trim() : '',
+                type: employeeType
+            };
+        });
+        // --- จบส่วนที่แก้ไข ---
+    };
 
-            const uploadProgress = document.getElementById('uploadProgress');
-            const progressFill = document.getElementById('progressFill');
-            const progressText = document.getElementById('progressText');
-            
-            if (uploadProgress) uploadProgress.classList.remove('hidden');
-            if (progressFill) progressFill.style.width = '0%';
-            if (progressText) progressText.textContent = 'กำลังประมวลผล...';
+    try {
+        const [monthlyResults, dailyResults] = await Promise.all([
+            fetch(monthlySheetURL).then(response => response.text()),
+            fetch(dailySheetURL).then(response => response.text())
+        ]);
 
-            Papa.parse(file, {
-                header: true,
-                skipEmptyLines: true,
-                complete: function(results) {
-                    if (progressFill) progressFill.style.width = '100%';
-                    if (progressText) progressText.textContent = 'ประมวลผลเสร็จสิ้น';
+        const monthlyEmployees = processSheetData(monthlyResults, 'รายเดือน');
+        const dailyEmployees = processSheetData(dailyResults, 'รายวัน');
 
-                    const scanEvents = results.data;
-                    const findHeader = (fields, names) => fields.find(h => h && names.some(n => h.trim().toLowerCase().includes(n)));
-                    
-                    const idHeader = findHeader(results.meta.fields, ['sjobno', 'job', 'id']);
-                    const nameHeader = findHeader(results.meta.fields, ['sname', 'name']);
-                    const dateHeader = findHeader(results.meta.fields, ['date']);
-                    const timeHeader = findHeader(results.meta.fields, ['time']);
-                    
-                    if (!idHeader || !dateHeader || !timeHeader) {
-                        showMessage('uploadResult', 'ไฟล์ CSV ไม่ถูกต้อง! ไม่พบคอลัมน์ที่จำเป็น (sJobNo, Date, Time)', 'error');
-                        if (uploadProgress) uploadProgress.classList.add('hidden');
-                        return;
-                    }
+        employees = [...monthlyEmployees, ...dailyEmployees];
 
-                    const dailyRecords = {};
-                    scanEvents.forEach(scan => {
-                        const id = scan[idHeader];
-                        const date = scan[dateHeader];
-                        const time = scan[timeHeader];
-                        
-                        if (!id || id.trim() === '0' || id.trim().toLowerCase() === 'null' || !date || !time) return;
-                        
-                        const key = `${id}-${date}`;
-                        if (!dailyRecords[key]) {
-                            dailyRecords[key] = { 
-                                id: id.trim(), 
-                                name: (scan[nameHeader] || '').trim(), 
-                                date: date.trim(), 
-                                times: [time.trim()] 
-                            };
-                        } else {
-                            dailyRecords[key].times.push(time.trim());
-                        }
-                    });
+        if(employees.length > 0){
+            showMessage('upload', `✅ โหลดข้อมูลพนักงาน ${employees.length} คนจาก Google Sheet สำเร็จ!`, 'success');
+            populateEmployeeDropdown();
+        } else {
+             showMessage('upload', `❌ ไม่สามารถโหลดข้อมูลพนักงานได้ หรือชีตว่างเปล่า`, 'error');
+        }
 
-                    timeRecords = Object.values(dailyRecords).map(rec => {
-                        rec.times.sort((timeA, timeB) => new Date('1970/01/01 ' + timeA) - new Date('1970/01/01 ' + timeB));
-                        rec.timeIn = rec.times[0];
-                        rec.timeOut = rec.times[rec.times.length - 1];
-                        return rec;
-                    });
+    } catch (error) {
+        console.error('เกิดข้อผิดพลาดในการดึงข้อมูลจาก Google Sheet:', error);
+        showMessage('upload', '❌ เกิดข้อผิดพลาดในการดึงข้อมูลพนักงานจาก Google Sheet', 'error');
+    }
+}
 
-                    displayUploadResults(timeRecords);
-                    
-                    setTimeout(() => {
-                        if (uploadProgress) uploadProgress.classList.add('hidden');
-                    }, 2000);
-                },
-                error: function(error) {
-                    showMessage('uploadResult', 'เกิดข้อผิดพลาดในการอ่านไฟล์ CSV', 'error');
-                    if (uploadProgress) uploadProgress.classList.add('hidden');
+        // 2. [แก้ไข] ฟังก์ชันจัดการการอัปโหลดไฟล์ CSV
+function handleFileUpload(input) {
+    const file = input.files[0];
+    if (!file) return;
+
+    const uploadProgress = document.getElementById('uploadProgress');
+    uploadProgress.classList.remove('hidden');
+    document.getElementById('progressFill').style.width = '0%';
+    document.getElementById('progressText').textContent = 'กำลังประมวลผล...';
+
+    Papa.parse(file, {
+        header: true,
+        skipEmptyLines: true,
+        complete: function(results) {
+            document.getElementById('progressFill').style.width = '100%';
+            document.getElementById('progressText').textContent = 'ประมวลผลเสร็จสิ้น';
+
+            // แก้ไขชื่อ Header ให้ตรงกับไฟล์ CSV ของจริง
+            const idHeader = results.meta.fields.find(h => h && h.trim() === 'sJobNo');
+            const dateHeader = results.meta.fields.find(h => h && h.trim() === 'Date');
+            const timeHeader = results.meta.fields.find(h => h && h.trim() === 'Time');
+
+            if (!idHeader || !dateHeader || !timeHeader) {
+                showMessage('uploadResult', `ไฟล์ CSV ไม่ถูกต้อง! ไม่พบคอลัมน์ที่จำเป็น (sJobNo, Date, Time)`, 'error');
+                uploadProgress.classList.add('hidden');
+                return;
+            }
+
+            // --- ส่วนที่แก้ไข ---
+            // เพิ่มบรรทัดที่ขาดหายไปกลับเข้ามา
+            const scanEvents = results.data;
+            // --- จบส่วนที่แก้ไข ---
+
+            const dailyRecords = {};
+            scanEvents.forEach(scan => {
+                const id = scan[idHeader];
+                const date = scan[dateHeader];
+                const time = scan[timeHeader];
+
+                if (!id || !date || !time) return;
+
+                const key = `${id.trim()}-${date.trim()}`;
+                if (!dailyRecords[key]) {
+                    dailyRecords[key] = { scanId: id.trim(), date: date.trim(), times: [time.trim()] };
+                } else {
+                    dailyRecords[key].times.push(time.trim());
                 }
+            });
+
+            timeRecords = Object.values(dailyRecords).map(rec => {
+                rec.times.sort();
+                rec.timeIn = rec.times[0];
+                rec.timeOut = rec.times[rec.times.length - 1];
+                return rec;
+            });
+
+            document.getElementById('uploadResult').innerHTML = `<div class="success">✅ อัปโหลดและประมวลผลไฟล์เรียบร้อย! พบข้อมูล ${timeRecords.length} วันทำงาน</div>`;
+            document.getElementById('calculationSection').classList.remove('hidden');
+            setTimeout(() => { uploadProgress.classList.add('hidden'); }, 2000);
+        },
+        error: function(error) {
+            showMessage('uploadResult', 'เกิดข้อผิดพลาดในการอ่านไฟล์ CSV', 'error');
+            uploadProgress.classList.add('hidden');
+        }
+    });
+}
+
+        // 3. [เพิ่มใหม่] ฟังก์ชันคำนวณชั่วโมงทำงานและ OT (หัวใจหลัก)
+        function calculateWorkHoursAndOT(dailyTimeRecords, shiftNumber) {
+            const shifts = {
+                '1': { start: '08:00', end: '17:00' },
+                '2': { start: '09:00', end: '18:00' },
+                '3': { start: '12:00', end: '21:00' },
+                '4': { start: '15:00', end: '24:00' }
+            };
+
+            if (!shifts[shiftNumber]) return { workHours: 0, otHours: 0 };
+            
+            const shift = shifts[shiftNumber];
+            const shiftStart = new Date(`1970-01-01T${shift.start}:00`);
+            let shiftEnd = new Date(`1970-01-01T${shift.end === '24:00' ? '23:59:59' : shift.end}:00`);
+
+            const timeIn = new Date(`1970-01-01T${dailyTimeRecords.timeIn}:00`);
+            let timeOut = new Date(`1970-01-01T${dailyTimeRecords.timeOut}:00`);
+            
+            // จัดการกะข้ามคืน
+            if (shiftEnd < shiftStart || timeOut < timeIn) {
+                 if (shiftEnd < shiftStart) shiftEnd.setDate(shiftEnd.getDate() + 1);
+                 if (timeOut < timeIn) timeOut.setDate(timeOut.getDate() + 1);
+            }
+            
+            // คำนวณชั่วโมงทำงาน (หักพัก 1 ชั่วโมงถ้าทำงานเกิน 6 ชั่วโมง)
+            let totalMillis = timeOut - timeIn;
+            let workHours = totalMillis / (1000 * 60 * 60);
+            if (workHours > 6) {
+                workHours -= 1; 
+            }
+            workHours = Math.max(0, workHours);
+
+            // คำนวณ OT (ต้องเกิน 1 ชั่วโมงขึ้นไป)
+            let otHours = 0;
+            const earlyMillis = shiftStart - timeIn;
+            if (earlyMillis > 0) {
+                const earlyHours = earlyMillis / (1000 * 60 * 60);
+                if (earlyHours >= 1) {
+                    otHours += Math.floor(earlyHours);
+                }
+            }
+
+            const lateMillis = timeOut - shiftEnd;
+            if (lateMillis > 0) {
+                 const lateHours = lateMillis / (1000 * 60 * 60);
+                 if (lateHours >= 1) {
+                    otHours += Math.floor(lateHours);
+                 }
+            }
+            
+            return { workHours: workHours, otHours: otHours };
+        }
+
+        // 4. [เพิ่มใหม่] ฟังก์ชันสำหรับสร้างรายงานสรุปผล
+        function calculateAndDisplaySummary() {
+    const startDateInput = document.getElementById('calc_start_date').value;
+    const endDateInput = document.getElementById('calc_end_date').value;
+    const otRate = parseFloat(document.getElementById('otRate').value) || 50;
+
+    if (!startDateInput || !endDateInput) {
+        alert('กรุณาเลือกช่วงวันที่สำหรับคำนวณ');
+        return;
+    }
+
+    const startDate = new Date(startDateInput);
+    startDate.setHours(0, 0, 0, 0); 
+    const endDate = new Date(endDateInput);
+    endDate.setHours(0, 0, 0, 0); 
+
+    const filteredRecords = timeRecords.filter(rec => {
+        const recDate = convertToDate(rec.date);
+        recDate.setHours(0, 0, 0, 0);
+        return recDate >= startDate && recDate <= endDate;
+    });
+    
+    if (filteredRecords.length === 0) {
+        document.getElementById('calculationResult').innerHTML = '<p style="color: #cc0000; text-align: center; margin-top: 1rem;">ไม่พบข้อมูลการทำงานในช่วงวันที่ที่คุณเลือก</p>';
+        return; 
+    }
+
+    const summary = {};
+    filteredRecords.forEach(rec => {
+        const employee = employees.find(emp => emp.scanId == rec.scanId); 
+        if (employee) {
+            if (!summary[employee.scanId]) {
+                summary[employee.scanId] = {
+                    name: employee.NAME,
+                    type: employee.type,
+                    totalWorkHours: 0,
+                    totalOtHours: 0,
+                    workDays: 0
+                };
+            }
+            const { workHours, otHours } = calculateWorkHoursAndOT(rec, employee.shift);
+            summary[employee.scanId].totalWorkHours += workHours;
+            summary[employee.scanId].totalOtHours += otHours;
+            summary[employee.scanId].workDays++;
+        }
+    });
+
+    let tableHTML = `
+        <h4>สรุปผลการคำนวณ (${formatDate(startDateInput)} - ${formatDate(endDateInput)})</h4>
+        <table>
+            <thead>
+                <tr><th>ชื่อพนักงาน</th><th>ประเภท</th><th>วันทำงาน</th><th>ชม.ทำงานรวม</th><th>ชม.OT รวม</th><th>ค่า OT</th></tr>
+            </thead>
+            <tbody>`;
+    
+    if (Object.keys(summary).length === 0) {
+        tableHTML += '<tr><td colspan="6" style="text-align: center; color: #cc0000;">ไม่สามารถจับคู่ข้อมูลได้ กรุณาตรวจสอบว่า `scanId` ใน Google Sheet ตรงกับในไฟล์ CSV</td></tr>';
+    } else {
+        for(const scanId in summary){
+            const data = summary[scanId];
+            const otPay = data.totalOtHours * otRate;
+            tableHTML += `
+                <tr>
+                    <td>${data.name}</td>
+                    <td>${data.type}</td>
+                    <td>${data.workDays}</td>
+                    <td>${data.totalWorkHours.toFixed(2)}</td>
+                    <td>${data.totalOtHours}</td>
+                    <td>${otPay.toLocaleString('th-TH')} ฿</td>
+                </tr>`;
+        }
+    }
+    
+    tableHTML += '</tbody></table>';
+    document.getElementById('calculationResult').innerHTML = tableHTML;
+}
+
+
+        // 5. [เพิ่มใหม่] ฟังก์ชันสำหรับสร้างรายงานรายบุคคล
+function generateIndividualReport() {
+    const empScanId = document.getElementById('report_employee_select').value;
+    const startDateInput = document.getElementById('report_start_date').value;
+    const endDateInput = document.getElementById('report_end_date').value;
+
+    if (!empScanId || !startDateInput || !endDateInput) {
+        alert('กรุณาเลือกพนักงานและช่วงวันที่ให้ครบถ้วน');
+        return;
+    }
+    
+    const startDate = new Date(startDateInput);
+    startDate.setHours(0, 0, 0, 0);
+
+    const endDate = new Date(endDateInput);
+    endDate.setHours(0, 0, 0, 0);
+    
+    const employee = employees.find(emp => emp.scanId == empScanId); 
+
+    const filteredRecords = timeRecords.filter(rec => {
+        const recDate = convertToDate(rec.date);
+        recDate.setHours(0, 0, 0, 0);
+        return rec.scanId == empScanId && recDate >= startDate && recDate <= endDate;
+    });
+    
+    if (!employee || filteredRecords.length === 0) {
+        document.getElementById('individualReportResult').innerHTML = '<p>ไม่พบข้อมูลการทำงานของพนักงานในช่วงวันที่ที่เลือก</p>';
+        return;
+    }
+
+    let tableHTML = `
+        <h4>รายงานของ: ${employee.NAME} (${formatDate(startDateInput)} - ${formatDate(endDateInput)})</h4>
+        <table>
+            <thead>
+                <tr><th>วันที่</th><th>เวลาเข้า</th><th>เวลาออก</th><th>ชั่วโมงทำงาน</th><th>ชั่วโมง OT</th></tr>
+            </thead>
+            <tbody>`;
+    
+    let totalWork = 0, totalOT = 0;
+    filteredRecords.forEach(rec => {
+        const { workHours, otHours } = calculateWorkHoursAndOT(rec, employee.shift);
+        totalWork += workHours;
+        totalOT += otHours;
+        tableHTML += `
+            <tr>
+                <td>${formatDate(rec.date)}</td>
+                <td>${rec.timeIn}</td>
+                <td>${rec.timeOut}</td>
+                <td>${workHours.toFixed(2)}</td>
+                <td>${otHours}</td>
+            </tr>`;
+    });
+
+    tableHTML += `
+            </tbody>
+            <tfoot>
+                <tr>
+                    <td colspan="3"><strong>รวม</strong></td>
+                    <td><strong>${totalWork.toFixed(2)}</strong></td>
+                    <td><strong>${totalOT}</strong></td>
+                </tr>
+            </tfoot>
+        </table>`;
+    
+    document.getElementById('individualReportResult').innerHTML = tableHTML;
+}
+
+
+        // --- Utility and UI Functions ---
+        function populateEmployeeDropdown() {
+            const select = document.getElementById('report_employee_select');
+            select.innerHTML = '<option value="">-- กรุณาเลือกพนักงาน --</option>';
+
+        // 1. กรองข้อมูลพนักงานให้เหลือเฉพาะคนที่มีข้อมูลครบถ้วน (ทั้ง scanId และ NAME)
+            const validEmployees = employees.filter(emp => emp && emp.scanId && emp.NAME);
+
+        // 2. นำข้อมูลที่สมบูรณ์แล้วมาจัดเรียงและสร้างเป็น Dropdown
+            validEmployees.sort((a, b) => a.NAME.localeCompare(b.NAME))
+            .forEach(emp => {
+            const option = document.createElement('option');
+            option.value = emp.scanId;
+            option.textContent = `${emp.NAME} (${emp.type})`;
+            select.appendChild(option);
             });
         }
         
-        function displayUploadResults(records) {
-            const resultDiv = document.getElementById('uploadResult');
-            if (!resultDiv) return;
-            
-            if (records.length === 0) {
-                showMessage('uploadResult', 'ไม่พบข้อมูลที่สามารถประมวลผลได้ในไฟล์', 'info');
-                return;
+        function convertToDate(dmyString) { // dd/mm/yyyy
+            const parts = dmyString.split('/');
+            return new Date(parts[2], parts[1] - 1, parts[0]);
+        }
+        
+        function formatDate(dateString) {
+            if(!dateString) return '';
+            if(dateString.includes('/')) {
+                 const parts = dateString.split('/');
+                 return `${parts[0].padStart(2, '0')}/${parts[1].padStart(2, '0')}/${parts[2]}`;
             }
-
-            let tableHTML = `
-                <div class="success">✅ อัปโหลดและประมวลผลไฟล์เรียบร้อย! พบข้อมูล ${records.length} วันทำงาน</div>
-                <div class="table-container" style="margin-top: 20px;">
-                    <h3>ตัวอย่างข้อมูลที่ประมวลผล (แสดง 10 แถวแรก)</h3>
-                    <table>
-                        <thead>
-                            <tr>
-                                <th>รหัสพนักงาน</th><th>ชื่อ</th><th>วันที่</th><th>เวลาเข้า</th><th>เวลาออก</th><th>จำนวนสแกน</th>
-                            </tr>
-                        </thead>
-                        <tbody>`;
-            
-            records.slice(0, 10).forEach(rec => {
-                tableHTML += `
-                    <tr>
-                        <td>${rec.id}</td><td>${rec.name || 'ไม่ระบุ'}</td><td>${rec.date}</td><td>${rec.timeIn}</td><td>${rec.timeOut}</td><td>${rec.times.length} ครั้ง</td>
-                    </tr>`;
-            });
-            
-            tableHTML += `
-                        </tbody>
-                        <tfoot>
-                            <tr>
-                                <td colspan="6" style="text-align: center; font-weight: bold;">แสดงตัวอย่าง ${Math.min(10, records.length)} แถว จากทั้งหมด ${records.length} แถว</td>
-                            </tr>
-                        </tfoot>
-                    </table>
-                </div>`;
-            resultDiv.innerHTML = tableHTML;
+            const date = new Date(dateString);
+            const day = String(date.getDate()).padStart(2, '0');
+            const month = String(date.getMonth() + 1).padStart(2, '0');
+            const year = date.getFullYear();
+            return `${day}/${month}/${year}`;
         }
 
-        // --- Employee Management ---
-        function addEmployee() {
-            const empId = document.getElementById('empId').value.trim();
-            const empName = document.getElementById('empName').value.trim();
-            const empSalary = document.getElementById('empSalary').value || 0;
-            const empType = document.getElementById('empType').value;
-            const empEmail = document.getElementById('empEmail').value.trim();
-            const empAccount = document.getElementById('empAccount').value.trim();
-
-            if (!empId || !empName) {
-                alert('กรุณากรอกรหัสและชื่อพนักงาน');
-                return;
-            }
-
-            const employeeData = { id: empId, name: empName, salary: parseFloat(empSalary), type: empType, email: empEmail, account: empAccount };
-
-            const existingIndex = employees.findIndex(emp => emp.id === empId);
-            if (existingIndex > -1) {
-                employees[existingIndex] = employeeData;
-                showMessage('employees', `อัปเดตข้อมูลพนักงาน ${empName} เรียบร้อย`, 'success');
-            } else {
-                employees.push(employeeData);
-                showMessage('employees', `เพิ่มพนักงาน ${empName} เรียบร้อย`, 'success');
-            }
-
-            updateEmployeeTable();
-            clearEmployeeForm();
-            saveEmployeesToLocal();
+        function showTab(tabName, clickedButton) {
+            document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+            document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+            document.getElementById(tabName).classList.add('active');
+            clickedButton.classList.add('active');
         }
-
-        function saveEmployeesToLocal() {
-            localStorage.setItem('payroll_employees', JSON.stringify(employees));
-        }
-
-        function loadEmployeesFromLocal() {
-            const employeesData = localStorage.getItem('payroll_employees');
-            if (employeesData) {
-                employees = JSON.parse(employeesData);
-            }
-        }
-
-        function clearEmployeeForm() {
-            document.getElementById('empId').value = '';
-            document.getElementById('empName').value = '';
-            document.getElementById('empSalary').value = '';
-            document.getElementById('empType').value = 'monthly';
-            document.getElementById('empEmail').value = '';
-            document.getElementById('empAccount').value = '';
-        }
-
-        function updateEmployeeTable() {
-            const tableBody = document.getElementById('employeeTableBody');
-            if (!tableBody) return;
-            tableBody.innerHTML = '';
-            if (employees.length === 0) {
-                tableBody.innerHTML = '<tr><td colspan="7" style="text-align: center; color: #666;">ยังไม่มีข้อมูลพนักงาน</td></tr>';
-                return;
-            }
-
-            employees.forEach((emp, index) => {
-                const row = tableBody.insertRow();
-                row.innerHTML = `
-                    <td>${emp.id}</td><td>${emp.name}</td><td>${emp.type === 'monthly' ? 'รายเดือน' : 'รายวัน'}</td><td>${emp.salary.toLocaleString('th-TH', { minimumFractionDigits: 2 })}</td><td>${emp.email || '-'}</td><td>${emp.account || '-'}</td>
-                    <td>
-                        <button class="btn btn-edit" onclick="editEmployee(${index})">✏️ แก้ไข</button>
-                        <button class="btn btn-danger" onclick="deleteEmployee(${index})" style="font-size: 12px; padding: 4px 8px;">🗑️ ลบ</button>
-                    </td>`;
-            });
-        }
-
-        function editEmployee(index) {
-            const emp = employees[index];
-            document.getElementById('empId').value = emp.id;
-            document.getElementById('empName').value = emp.name;
-            document.getElementById('empType').value = emp.type;
-            document.getElementById('empSalary').value = emp.salary;
-            document.getElementById('empEmail').value = emp.email;
-            document.getElementById('empAccount').value = emp.account;
-            document.getElementById('empId').scrollIntoView({ behavior: 'smooth', block: 'center' });
-        }
-
-        function deleteEmployee(index) {
-            if (confirm(`ต้องการลบพนักงาน ${employees[index].name} ใช่หรือไม่?`)) {
-                const deletedName = employees[index].name;
-                employees.splice(index, 1);
-                updateEmployeeTable();
-                showMessage('employees', `ลบพนักงาน ${deletedName} เรียบร้อย`, 'info');
-                saveEmployeesToLocal();
-            }
-        }
-
-        function loadSampleEmployees() {
-    // ข้อมูลพนักงานชุดใหม่ พร้อมรหัสสำหรับสแกน (scanId)
-    const updatedEmployees = [
-        { id: 'CR001', name: 'Onpreeya Rueankaew (Namfon)', scanId: '8', salary: 35000, type: 'monthly', email: 'Onpreeya31042@gmail.com', account: '0708725439' },
-        { id: 'CR002', name: 'Watharaphong Bosong (Mark)', scanId: '5', salary: 12000, type: 'monthly', email: 'Watcharapong.mankvisiong@gmail.com', account: '3432500852' },
-        { id: 'CR003', name: 'Thanapon Ratchanahun (Rung)', scanId: '39', salary: 15000, type: 'monthly', email: 'rang147963258@gmail.com', account: '7520352927' },
-        { id: 'CR004', name: 'Chokdee Butto (Ta)', scanId: '14', salary: 26000, type: 'monthly', email: 'chokdeebutto0996060086@gmail.com', account: '0203880952' },
-        { id: 'CR005', name: 'Khwanruedee Maithong (Lek)', scanId: '12', salary: 12000, type: 'monthly', email: 'bbnn24831@gmail.com', account: '9770522259' },
-        { id: 'CR006', name: 'YY Ton (Na)', scanId: '35', salary: 350, type: 'daily', email: 'yyton415@gmail.com', account: '7017076881' },
-        { id: 'CR007', name: 'Seasakul Phoraya (Ning)', scanId: '34', salary: 350, type: 'daily', email: 'kunnutt98@gmail.com', account: '0861348393' },
-        { id: 'CR008', name: 'Wannisa Thatsarach (Fern)', scanId: '38', salary: 350, type: 'daily', email: 'thefernloveeddy@gmail.com', account: '0541997482' },
-        { id: 'CR009', name: 'Thitikorn Orachai (Rose)', scanId: '32', salary: 350, type: 'daily', email: 'Thitikornorachai@gmail.com', account: '4089885633' },
-        { id: 'CR010', name: 'Siriporn Yaisomboon (Fang)', scanId: '41', salary: 350, type: 'daily', email: 'ff0644186719@gmail.com', account: '4191642905' },
-        { id: 'CR011', name: 'Wiphawee Thintawee (Aum)', scanId: '7', salary: 350, type: 'daily', email: 'awiphawee.thin@gmail.com', account: '1258905802' },
-        { id: 'CR012', name: 'Kittaya Waehum (Augoon)', scanId: '37', salary: 350, type: 'daily', email: 'kvtyawachum@gmail.com', account: '6042744705' },
-        { id: 'CR013', name: 'Apidet Intaraksa (Leng)', scanId: '20', salary: 750, type: 'daily', email: 'Apidet.intaraksa02@gmail.com', account: '1668747872' },
-        { id: 'CR014', name: 'Methasit Yodsra (Mo)', scanId: '_N/A_', salary: 300, type: 'daily', email: 'MaytasitN.1@gmail.com', account: '4191225614' },
-        { id: 'CR015', name: 'Cristian Andrade (Cris)', scanId: '_N/A_', salary: 150000, type: 'monthly', email: 'Cristian9landraade@gmail.com', account: '8402159380' },
-        { id: 'CR016', name: 'Kanyanat Chayngam (Praew)', scanId: '_N/A_', salary: 16000, type: 'monthly', email: 'Praewkanyanat2536@gmail.com', account: '0673781322' },
-        { id: 'CR017', name: 'Tripop Tassarat (M)', scanId: '3', salary: 12000, type: 'monthly', email: 'aempop.25452945@gmail.com', account: '8632344591' },
-        { id: 'CR018', name: 'Tanapon Muangsri (Mark)', scanId: '25', salary: 10000, type: 'monthly', email: 'Tanapoll.mm@gmail.com', account: '1343979173' },
-        { id: 'CR019', name: 'Danai Aimthem (Tom)', scanId: '40', salary: 10000, type: 'monthly', email: 'Tomkhung95792@gmail.com', account: '1348116378' },
-        { id: 'CR020', name: 'Oliver Faust (Oliver)', scanId: '10', salary: 12000, type: 'monthly', email: 'Socioty765899@gmail.com', account: '6760253564' },
-        { id: 'CR021', name: 'Nusorn Aimtem (Tam)', scanId: '31', salary: 10000, type: 'monthly', email: 'Nusrnxitem@gmail.com', account: '6512384121' },
-        { id: 'CR022', name: 'Patipan Pinunoi (ice)', scanId: '_N/A_', salary: 350, type: 'daily', email: 'pinijnoip@gmail.com', account: '1098672881' },
-        { id: 'CR023', name: 'Chanthawong Promsorn (Jom)', scanId: '_N/A_', salary: 350, type: 'daily', email: 'Chanthawong0301@gmail.com', account: '1098672881' },
-        { id: 'CR024', name: 'Jetsadaporn Pantong (nine)', scanId: '_N/A_', salary: 15000, type: 'monthly', email: 'ninne3466@gmail.com', account: '4321053285' },
-        { id: 'CR025', name: 'Wipaporn Chumphoochanaphai (Aun)', scanId: '_N/A_', salary: 350, type: 'daily', email: 'aunwipaporn14@gmail.com', account: '7310648862' },
-        { id: 'CR026', name: 'Narongsak Nakanukro (Maew)', scanId: '_N/A_', salary: 350, type: 'daily', email: 'maewza0094@gmail.com', account: '7310648862' },
-        { id: 'CR027', name: 'Tanapat Khamphinee (nut)', scanId: '_N/A_', salary: 400, type: 'daily', email: 'Thanpat090945@gmail.com', account: '7017067674' },
-        { id: 'CR028', name: 'Thittaya Bhuddachinorossakul (Kitty)', scanId: '_N/A_', salary: 50000, type: 'monthly', email: 'Kitty.ceresagrotech@gmail.com', account: '0073795451' },
-        { id: 'CR029', name: 'Phakhaphon Butyut (Dew)', scanId: '_N/A_', salary: 350, type: 'daily', email: 'Phakhaphonbutyut@gmail.com', account: '1528998972' },
-        { id: 'CR030', name: 'Kanjana Narod (anpun)', scanId: '_N/A_', salary: 350, type: 'daily', email: 'Kanjananarod37@gmail.com', account: '0881939150' }
-    ];
-    
-    employees = [...updatedEmployees];
-    updateEmployeeTable();
-    saveEmployeesToLocal();
-    showMessage('employees', 'อัปเดตข้อมูลพนักงาน 30 คน (พร้อมรหัสสแกน) เรียบร้อย', 'success');
-}
-
-        // --- Payroll Calculation ---
-        // *** แก้ไขฟังก์ชัน calculatePayroll ทั้งหมด ***
-        function calculatePayroll() {
-            // 1. อ่านค่าเดือนจากทั้ง 2 ช่อง และใช้ค่าที่มี
-            const payrollMonthInput = document.getElementById('report_month').value || document.getElementById('calculate_month').value;
-            
-            if (!payrollMonthInput) {
-                alert('กรุณาเลือกเดือนที่ต้องการคำนวณ');
-                return;
-            }
-            if (employees.length === 0) {
-                alert('กรุณาเพิ่มข้อมูลพนักงานก่อน');
-                return;
-            }
-            if (timeRecords.length === 0) {
-                alert('กรุณาอัปโหลดข้อมูลเวลาทำงานก่อน');
-                return;
-            }
-            
-            payrollResults = [];
-            
-            employees.forEach(emp => {
-                const empTimeRecords = timeRecords.filter(record => {
-                    if (record.id !== emp.scanId || !record.date || !record.date.includes('/')) {
-                    return false;
-                    }
-                    
-                    const dateParts = record.date.split('/');
-                    if (dateParts.length !== 3) return false;
-
-                    const month = dateParts[1];
-                    const year = dateParts[2];
-
-                    if (year.length !== 4) return false;
-
-                    const monthPadded = month.padStart(2, '0');
-                    const recordMonthYear = `${year}-${monthPadded}`;
-                    
-                    return recordMonthYear === payrollMonthInput;
-                });
-                
-                let totalWorkDays = empTimeRecords.length;
-                let totalOtHours = 0;
-                let totalWorkHours = 0;
-                let avgCheckInTime = '';
-                
-                if (empTimeRecords.length > 0) {
-                    let checkInTimes = [];
-                    empTimeRecords.forEach(record => {
-                        if (record.timeIn && record.timeOut && record.timeIn !== record.timeOut) {
-                            const timeIn = parseTime(record.timeIn);
-                            const timeOut = parseTime(record.timeOut);
-                            let workHours = (timeOut - timeIn) / 3600000;
-                            
-                            if (workHours < 0) workHours += 24;
-                            if (workHours > 6) workHours -= 1;
-                            totalWorkHours += workHours;
-                            if (workHours > 8) {
-                                totalOtHours += (workHours - 8);
-                            }
-                            checkInTimes.push(record.timeIn);
-                        }
-                    });
-                    
-                    if (checkInTimes.length > 0) {
-                        const avgMinutes = checkInTimes.reduce((sum, time) => {
-                            const [h, m] = time.split(':').map(n => parseInt(n));
-                            return sum + (h * 60 + m);
-                        }, 0) / checkInTimes.length;
-                        
-                        const hours = Math.floor(avgMinutes / 60);
-                        const minutes = Math.round(avgMinutes % 60);
-                        avgCheckInTime = `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}`;
-                    }
-                }
-                
-                let grossSalary = (emp.type === 'monthly') ? emp.salary : emp.salary * totalWorkDays;
-                const hourlyRate = (emp.type === 'monthly' ? emp.salary / 30 : emp.salary) / 8;
-                const otPay = totalOtHours * hourlyRate * 1.5;
-                const totalSalary = grossSalary + otPay;
-                
-                payrollResults.push({
-                    id: emp.id, name: emp.name, workDays: totalWorkDays, workHours: totalWorkHours, otHours: totalOtHours,
-                    grossSalary: grossSalary, otPay: otPay, totalSalary: totalSalary, avgCheckIn: avgCheckInTime
-                });
-            });
-
-            updateReportTable();
-            updateReportSummary();
-            showCalculationResults();
-            showMessage('calculate', 'คำนวณเงินเดือนเรียบร้อย!', 'success');
-        }
-
-        function parseTime(timeStr) {
-            const [hours, minutes] = timeStr.split(':').map(n => parseInt(n));
-            const date = new Date();
-            date.setHours(hours, minutes, 0, 0);
-            return date;
-        }
-
-        function showCalculationResults() {
-            const resultDiv = document.getElementById('calculationResult');
-            if (!resultDiv || payrollResults.length === 0) return;
-            
-            const totalEmployees = payrollResults.length;
-            const totalSalary = payrollResults.reduce((sum, r) => sum + r.totalSalary, 0);
-            const totalOT = payrollResults.reduce((sum, r) => sum + r.otHours, 0);
-            
-            const resultHTML = `
-                <div class="success">✅ คำนวณเงินเดือนเรียบร้อย!</div>
-                <div class="summary-cards" style="margin-top: 20px;">
-                    <div class="card"><h3>พนักงานที่คำนวณ</h3><div class="value">${totalEmployees} คน</div></div>
-                    <div class="card"><h3>เงินเดือนรวม</h3><div class="value">${totalSalary.toLocaleString('th-TH', { minimumFractionDigits: 2 })} ฿</div></div>
-                    <div class="card"><h3>OT รวม</h3><div class="value">${totalOT.toFixed(1)} ชม.</div></div>
-                </div>`;
-            resultDiv.innerHTML = resultHTML;
-        }
-
-        // --- Reports ---
-        function updateReportSummary() {
-            const totalEmployeesElem = document.getElementById('totalEmployees');
-            const totalSalaryElem = document.getElementById('totalSalary');
-            const totalOTElem = document.getElementById('totalOT');
-            const avgWorkDaysElem = document.getElementById('avgWorkDays');
-
-            if (totalEmployeesElem) totalEmployeesElem.textContent = `${employees.length} คน`;
-
-            if (payrollResults.length > 0) {
-                const totalSalary = payrollResults.reduce((sum, r) => sum + r.totalSalary, 0);
-                const totalOT = payrollResults.reduce((sum, r) => sum + r.otHours, 0);
-                const totalDays = payrollResults.reduce((sum, r) => sum + r.workDays, 0);
-                const avgDays = employees.length > 0 ? (totalDays / employees.length) : 0;
-                
-                if (totalSalaryElem) totalSalaryElem.textContent = `${totalSalary.toLocaleString('th-TH', { minimumFractionDigits: 2 })} ฿`;
-                if (totalOTElem) totalOTElem.textContent = `${totalOT.toFixed(1)} ชม.`;
-                if (avgWorkDaysElem) avgWorkDaysElem.textContent = `${avgDays.toFixed(1)} วัน`;
-            } else {
-                if (totalSalaryElem) totalSalaryElem.textContent = `0.00 ฿`;
-                if (totalOTElem) totalOTElem.textContent = `0 ชม.`;
-                if (avgWorkDaysElem) avgWorkDaysElem.textContent = `0 วัน`;
-            }
-        }
-
-        function updateReportTable() {
-            const tableBody = document.getElementById('reportTable');
-            if (!tableBody) return;
-            tableBody.innerHTML = '';
-            if (payrollResults.length === 0) {
-                tableBody.innerHTML = `<tr><td colspan="9" style="text-align: center; color: #666;">ยังไม่มีข้อมูลการคำนวณ กรุณาคำนวณเงินเดือนก่อน</td></tr>`;
-                return;
-            }
-
-            payrollResults.forEach(result => {
-                const row = tableBody.insertRow();
-                row.innerHTML = `
-                    <td>${result.id}</td><td>${result.name}</td><td>${result.workDays} วัน</td><td>${result.workHours.toFixed(1)} ชม.</td><td>${result.otHours.toFixed(1)} ชม.</td><td>${result.grossSalary.toLocaleString('th-TH', { minimumFractionDigits: 2 })}</td><td>${result.otPay.toFixed(2)}</td><td><strong>${result.totalSalary.toLocaleString('th-TH', { minimumFractionDigits: 2 })}</strong></td><td>${result.avgCheckIn || '-'}</td>`;
-            });
-        }
-
-        // --- Bank File Generation ---
-        function generateBankFile() { /* ... โค้ดเดิม ... */ }
-        function generateKBankFile(c, n, d) { /* ... โค้ดเดิม ... */ }
-        function generateSCBFile(c, n, d) { /* ... โค้ดเดิม ... */ }
-        function generateGenericFile(c, n, d) { /* ... โค้ดเดิม ... */ }
-        function previewBankFile() { /* ... โค้ดเดิม ... */ }
-        function generatePayslips() { /* ... โค้ดเดิม ... */ }
-        function sendAllPayslips() { /* ... โค้ดเดิม ... */ }
-        function exportCalculation() { /* ... โค้ดเดิม ... */ }
-        function exportReport() { exportCalculation(); }
-        function printReport() { window.print(); }
-
-        // --- Utility Functions ---
+        
         function showMessage(containerId, message, type = 'info') {
             const container = document.getElementById(containerId);
-            if (!container) return;
-            const existingMessages = container.querySelectorAll('.info, .success, .error');
-            existingMessages.forEach(msg => msg.remove());
-            const messageDiv = document.createElement('div');
-            messageDiv.className = type;
-            messageDiv.innerHTML = message;
-            container.insertBefore(messageDiv, container.firstChild);
-            setTimeout(() => { if (messageDiv.parentNode) { messageDiv.remove(); } }, 5000);
-        }
-
-        function downloadFile(content, filename) {
-            const blob = new Blob([content], { type: 'text/plain;charset=utf-8;' });
-            const link = document.createElement('a');
-            const url = URL.createObjectURL(blob);
-            link.setAttribute('href', url);
-            link.setAttribute('download', filename);
-            link.style.visibility = 'hidden';
-            document.body.appendChild(link);
-            link.click();
-            document.body.removeChild(link);
+            const messageArea = container.querySelector('.success, .error, .info') || document.createElement('div');
+            messageArea.className = type;
+            messageArea.innerHTML = message;
+            if (!messageArea.parentNode) {
+                container.insertBefore(messageArea, container.firstChild);
+            }
+            setTimeout(() => { messageArea.remove(); }, 5000);
         }
 
         // --- Initialize ---
         document.addEventListener('DOMContentLoaded', () => {
-            loadEmployeesFromLocal();
-            const today = new Date();
-            const month = (today.getMonth() + 1).toString().padStart(2, '0');
-            const year = today.getFullYear();
-            const defaultMonth = `${year}-${month}`;
-            
-            // ตั้งค่าเดือนเริ่มต้นให้กับทั้ง 2 ช่อง
-            document.getElementById('calculate_month').value = defaultMonth;
-            document.getElementById('report_month').value = defaultMonth;
-            
-            updateEmployeeTable();
-            updateReportSummary();
+            fetchAllEmployeesFromGoogleSheet();
         });
     </script>
 </body>
