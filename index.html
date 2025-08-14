@@ -96,42 +96,59 @@
     const monthlySheetURL = 'https://docs.google.com/spreadsheets/d/e/2PACX-1vTPeXCWESqvqiaslhR8j-YvPBsPUi8RGDX8GKJ9w4XrUSbjrp2OotRG9zFz2oRdIFooVk7RVVKTD1cL/pub?gid=166039384&single=true&output=csv';
     const dailySheetURL = 'https://docs.google.com/spreadsheets/d/e/2PACX-1vTPeXCWESqvqiaslhR8j-YvPBsPUi8RGDX8GKJ9w4XrUSbjrp2OotRG9zFz2oRdIFooVk7RVVKTD1cL/pub?gid=1323019072&single=true&output=csv';
 
-    const processSheetData = (csvText, employeeType) => {
+const processSheetData = (csvText, employeeType) => {
         const result = Papa.parse(csvText, { header: true, skipEmptyLines: true });
         const data = result.data;
         const fields = result.meta.fields;
 
-        // --- ส่วนที่แก้ไข ---
-        // ค้นหา key ของ scanId แบบไม่สนตัวพิมพ์ใหญ่/เล็ก และช่องว่าง
+        // คอลัมน์ที่จำเป็น (ต้องมี)
+        const idKey = fields.find(f => f && f.trim().toLowerCase() === 'id');
         const scanIdKey = fields.find(f => f && f.trim().toLowerCase() === 'scanid');
-
-        if (!scanIdKey) {
-            console.error(`ไม่พบคอลัมน์ 'scanid' ในชีตของพนักงานประเภท: ${employeeType}`);
+        const nameKey = fields.find(f => f && f.trim().toLowerCase() === 'name');
+        const salaryKey = fields.find(f => f && f.trim().toLowerCase() === 'salary');
+        
+        // คอลัมน์เสริม (ถ้ามีก็จะใช้ ถ้าไม่มีก็ไม่เป็นไร)
+        const nicknameKey = fields.find(f => f && f.trim().toLowerCase() === 'nickname');
+        const positionKey = fields.find(f => f && f.trim().toLowerCase() === 'position');
+        
+        // ตรวจสอบเฉพาะคอลัมน์ที่จำเป็นเท่านั้น
+        if (!idKey || !scanIdKey || !nameKey || !salaryKey) {
+            console.error(`ไม่พบคอลัมน์ที่จำเป็น (id, scanid, name, salary) ในชีต: ${employeeType}`);
             return [];
         }
-
+        
         return data.map(emp => {
-            // สร้าง object ใหม่ที่สะอาดและมี property 'scanId' ที่ถูกต้อง
-            return {
-                ...emp,
-                scanId: emp[scanIdKey] ? emp[scanIdKey].trim() : '',
-                type: employeeType
-            };
+            const cleanEmployee = { ...emp }; 
+            cleanEmployee.ID = emp[idKey]?.trim() || 'N/A';
+            cleanEmployee.scanId = emp[scanIdKey]?.trim() || '';
+            cleanEmployee.NAME = emp[nameKey]?.trim() || 'N/A';
+            cleanEmployee.SALARY = emp[salaryKey]?.trim() || '0';
+            cleanEmployee.NICKNAME = nicknameKey ? (emp[nicknameKey]?.trim() || '') : '';
+            cleanEmployee.POSITION = positionKey ? (emp[positionKey]?.trim() || '') : '';
+            // --- [ส่วนที่แก้ไข] นำข้อมูลประกันสังคมออก ---
+            // cleanEmployee.ประกันสังคม = socialSecurityKey ? (emp[socialSecurityKey]?.trim() || 'ไม่') : 'ไม่';
+            cleanEmployee.type = employeeType;
+            return cleanEmployee;
         });
-        // --- จบส่วนที่แก้ไข ---
     };
 
     try {
         const [monthlyResults, dailyResults] = await Promise.all([
-            fetch(monthlySheetURL).then(response => response.text()),
-            fetch(dailySheetURL).then(response => response.text())
+            fetch(monthlySheetURL).then(response => {
+                if (!response.ok) throw new Error(`Network response was not ok for monthly sheet`);
+                return response.text();
+            }),
+            fetch(dailySheetURL).then(response => {
+                if (!response.ok) throw new Error(`Network response was not ok for daily sheet`);
+                return response.text();
+            })
         ]);
 
         const monthlyEmployees = processSheetData(monthlyResults, 'รายเดือน');
         const dailyEmployees = processSheetData(dailyResults, 'รายวัน');
 
         employees = [...monthlyEmployees, ...dailyEmployees];
-
+        
         if(employees.length > 0){
             showMessage('upload', `✅ โหลดข้อมูลพนักงาน ${employees.length} คนจาก Google Sheet สำเร็จ!`, 'success');
             populateEmployeeDropdown();
@@ -162,10 +179,9 @@ function handleFileUpload(input) {
             document.getElementById('progressFill').style.width = '100%';
             document.getElementById('progressText').textContent = 'ประมวลผลเสร็จสิ้น';
 
-            // แก้ไขชื่อ Header ให้ตรงกับไฟล์ CSV ของจริง
             const idHeader = results.meta.fields.find(h => h && h.trim() === 'sJobNo');
-            const dateHeader = results.meta.fields.find(h => h && h.trim() === 'Date');
-            const timeHeader = results.meta.fields.find(h => h && h.trim() === 'Time');
+            const dateHeader = results.meta.fields.find(h => h.trim() === 'Date');
+            const timeHeader = results.meta.fields.find(h => h.trim() === 'Time');
 
             if (!idHeader || !dateHeader || !timeHeader) {
                 showMessage('uploadResult', `ไฟล์ CSV ไม่ถูกต้อง! ไม่พบคอลัมน์ที่จำเป็น (sJobNo, Date, Time)`, 'error');
@@ -173,11 +189,7 @@ function handleFileUpload(input) {
                 return;
             }
 
-            // --- ส่วนที่แก้ไข ---
-            // เพิ่มบรรทัดที่ขาดหายไปกลับเข้ามา
             const scanEvents = results.data;
-            // --- จบส่วนที่แก้ไข ---
-
             const dailyRecords = {};
             scanEvents.forEach(scan => {
                 const id = scan[idHeader];
@@ -195,9 +207,12 @@ function handleFileUpload(input) {
             });
 
             timeRecords = Object.values(dailyRecords).map(rec => {
-                rec.times.sort();
-                rec.timeIn = rec.times[0];
-                rec.timeOut = rec.times[rec.times.length - 1];
+                // --- [ส่วนที่แก้ไข] ---
+                // เปลี่ยน .sort() ธรรมดาเป็นการ sort แบบเปรียบเทียบเวลาจริงๆ
+                rec.times = [...new Set(rec.times)].sort((timeA, timeB) => {
+                    return new Date('1970/01/01 ' + timeA) - new Date('1970/01/01 ' + timeB);
+                });
+                // --- จบส่วนที่แก้ไข ---
                 return rec;
             });
 
@@ -213,60 +228,86 @@ function handleFileUpload(input) {
 }
 
         // 3. [เพิ่มใหม่] ฟังก์ชันคำนวณชั่วโมงทำงานและ OT (หัวใจหลัก)
-        function calculateWorkHoursAndOT(dailyTimeRecords, shiftNumber) {
-            const shifts = {
-                '1': { start: '08:00', end: '17:00' },
-                '2': { start: '09:00', end: '18:00' },
-                '3': { start: '12:00', end: '21:00' },
-                '4': { start: '15:00', end: '24:00' }
-            };
+function calculateWorkHoursAndOT(dailyTimeRecords, employee) {
+    // [LOG] เก็บไว้ตามที่คุณต้องการ
+    // console.log(`[Debug Calc] กำลังคำนวณ ID: ${dailyTimeRecords.scanId} วันที่: ${dailyTimeRecords.date} ด้วยชุดเวลา:`, dailyTimeRecords.times);
 
-            if (!shifts[shiftNumber]) return { workHours: 0, otHours: 0 };
-            
-            const shift = shifts[shiftNumber];
-            const shiftStart = new Date(`1970-01-01T${shift.start}:00`);
-            let shiftEnd = new Date(`1970-01-01T${shift.end === '24:00' ? '23:59:59' : shift.end}:00`);
+    if (!dailyTimeRecords.times || dailyTimeRecords.times.length < 2) {
+        return { workHours: 0, otHours: 0 };
+    }
 
-            const timeIn = new Date(`1970-01-01T${dailyTimeRecords.timeIn}:00`);
-            let timeOut = new Date(`1970-01-01T${dailyTimeRecords.timeOut}:00`);
-            
-            // จัดการกะข้ามคืน
-            if (shiftEnd < shiftStart || timeOut < timeIn) {
-                 if (shiftEnd < shiftStart) shiftEnd.setDate(shiftEnd.getDate() + 1);
-                 if (timeOut < timeIn) timeOut.setDate(timeOut.getDate() + 1);
-            }
-            
-            // คำนวณชั่วโมงทำงาน (หักพัก 1 ชั่วโมงถ้าทำงานเกิน 6 ชั่วโมง)
-            let totalMillis = timeOut - timeIn;
-            let workHours = totalMillis / (1000 * 60 * 60);
-            if (workHours > 6) {
-                workHours -= 1; 
-            }
-            workHours = Math.max(0, workHours);
+    const shifts = {
+        '1': { name: 'กะ 8 โมง', start: '08:00', end: '17:00' },
+        '2': { name: 'กะ 9 โมง', start: '09:00', end: '18:00' },
+        '3': { name: 'กะเที่ยง', start: '12:00', end: '21:00' },
+        '4': { name: 'กะบ่าย 3', start: '15:00', end: '24:00' }
+    };
 
-            // คำนวณ OT (ต้องเกิน 1 ชั่วโมงขึ้นไป)
-            let otHours = 0;
-            const earlyMillis = shiftStart - timeIn;
-            if (earlyMillis > 0) {
-                const earlyHours = earlyMillis / (1000 * 60 * 60);
-                if (earlyHours >= 1) {
-                    otHours += Math.floor(earlyHours);
-                }
-            }
+    const firstScanTime = dailyTimeRecords.times[0];
+    const lastScanTime = dailyTimeRecords.times[dailyTimeRecords.times.length - 1];
 
-            const lateMillis = timeOut - shiftEnd;
-            if (lateMillis > 0) {
-                 const lateHours = lateMillis / (1000 * 60 * 60);
-                 if (lateHours >= 1) {
-                    otHours += Math.floor(lateHours);
-                 }
-            }
-            
-            return { workHours: workHours, otHours: otHours };
+    if (!firstScanTime || !lastScanTime) {
+        return { workHours: 0, otHours: 0 };
+    }
+
+    // --- [ส่วนที่แก้ไข] ---
+    // เปลี่ยนวิธีการสร้าง Date object ทั้งหมดให้เป็นรูปแบบที่เสถียรขึ้น
+    const timeIn = new Date('1970/01/01 ' + firstScanTime);
+    let timeOut = new Date('1970/01/01 ' + lastScanTime);
+    if (timeOut < timeIn) { timeOut.setDate(timeOut.getDate() + 1); }
+
+    let totalWorkMillis = 0;
+    for (let i = 0; i < dailyTimeRecords.times.length; i += 2) {
+        if (dailyTimeRecords.times[i+1]) { 
+            const scanIn = new Date('1970/01/01 ' + dailyTimeRecords.times[i]);
+            let scanOut = new Date('1970/01/01 ' + dailyTimeRecords.times[i+1]);
+
+            if (scanOut < scanIn) { scanOut.setDate(scanOut.getDate() + 1); }
+            totalWorkMillis += (scanOut - scanIn);
         }
+    }
+    const workHours = totalWorkMillis / (1000 * 60 * 60);
+
+    let bestShift = null;
+    let smallestDiff = Infinity;
+    for (const shiftKey in shifts) {
+        const shift = shifts[shiftKey];
+        const shiftStart = new Date('1970/01/01 ' + shift.start);
+        const diff = Math.abs(timeIn - shiftStart);
+        if (diff < smallestDiff) {
+            smallestDiff = diff;
+            bestShift = shift;
+        }
+    }
+
+    if (!bestShift) {
+        return { workHours: workHours, otHours: 0 };
+    }
+
+    const shiftStart = new Date('1970/01/01 ' + bestShift.start);
+    let shiftEnd = new Date('1970/01/01 ' + (bestShift.end === '24:00' ? '23:59:59' : bestShift.end));
+    // --- จบส่วนที่แก้ไข ---
+
+    if (shiftEnd < shiftStart) { shiftEnd.setDate(shiftEnd.getDate() + 1); }
+
+    let otHours = 0;
+    const earlyMillis = shiftStart - timeIn;
+    if (earlyMillis > 0) {
+        const earlyHours = earlyMillis / (1000 * 60 * 60);
+        if (earlyHours >= 1) { otHours += Math.floor(earlyHours); }
+    }
+
+    const lateMillis = timeOut - shiftEnd;
+    if (lateMillis > 0) {
+        const lateHours = lateMillis / (1000 * 60 * 60);
+        if (lateHours >= 1) { otHours += Math.floor(lateHours); }
+    }
+
+    return { workHours: workHours, otHours: otHours };
+}
 
         // 4. [เพิ่มใหม่] ฟังก์ชันสำหรับสร้างรายงานสรุปผล
-        function calculateAndDisplaySummary() {
+function calculateAndDisplaySummary() {
     const startDateInput = document.getElementById('calc_start_date').value;
     const endDateInput = document.getElementById('calc_end_date').value;
     const otRate = parseFloat(document.getElementById('otRate').value) || 50;
@@ -297,15 +338,20 @@ function handleFileUpload(input) {
         const employee = employees.find(emp => emp.scanId == rec.scanId); 
         if (employee) {
             if (!summary[employee.scanId]) {
+                const cleanedSalary = employee.SALARY.replace(/[^\d.-]/g, '');
                 summary[employee.scanId] = {
+                    id: employee.ID,
                     name: employee.NAME,
+                    nickname: employee.NICKNAME,
+                    position: employee.POSITION,
                     type: employee.type,
+                    salary: parseFloat(cleanedSalary) || 0,
                     totalWorkHours: 0,
                     totalOtHours: 0,
                     workDays: 0
                 };
             }
-            const { workHours, otHours } = calculateWorkHoursAndOT(rec, employee.shift);
+            const { workHours, otHours } = calculateWorkHoursAndOT(rec, employee);
             summary[employee.scanId].totalWorkHours += workHours;
             summary[employee.scanId].totalOtHours += otHours;
             summary[employee.scanId].workDays++;
@@ -316,24 +362,39 @@ function handleFileUpload(input) {
         <h4>สรุปผลการคำนวณ (${formatDate(startDateInput)} - ${formatDate(endDateInput)})</h4>
         <table>
             <thead>
-                <tr><th>ชื่อพนักงาน</th><th>ประเภท</th><th>วันทำงาน</th><th>ชม.ทำงานรวม</th><th>ชม.OT รวม</th><th>ค่า OT</th></tr>
+                <tr>
+                    <th>ID</th>
+                    <th>ชื่อพนักงาน</th>
+                    <th>ตำแหน่ง</th>
+                    <th>วันทำงาน</th>
+                    <th>ชม.OT</th>
+                    <th>ค่า OT</th>
+                    <th>ฐานเงินเดือน</th>
+                    <th>ยอดจ่ายสุทธิ</th>
+                </tr>
             </thead>
             <tbody>`;
     
     if (Object.keys(summary).length === 0) {
-        tableHTML += '<tr><td colspan="6" style="text-align: center; color: #cc0000;">ไม่สามารถจับคู่ข้อมูลได้ กรุณาตรวจสอบว่า `scanId` ใน Google Sheet ตรงกับในไฟล์ CSV</td></tr>';
+        tableHTML += '<tr><td colspan="8" style="text-align: center; color: #cc0000;">ไม่สามารถจับคู่ข้อมูลได้</td></tr>';
     } else {
         for(const scanId in summary){
             const data = summary[scanId];
             const otPay = data.totalOtHours * otRate;
+            const baseSalary = data.type === 'รายวัน' ? data.salary * data.workDays : data.salary;
+            const totalPay = baseSalary + otPay;
+            const displayName = `${data.name} (${data.nickname.toLowerCase()})`;
+
             tableHTML += `
                 <tr>
-                    <td>${data.name}</td>
-                    <td>${data.type}</td>
-                    <td>${data.workDays}</td>
-                    <td>${data.totalWorkHours.toFixed(2)}</td>
-                    <td>${data.totalOtHours}</td>
+                    <td>${data.id}</td>
+                    <td>${displayName}</td>
+                    <td>${data.position}</td>
+                    <td style="text-align: center;">${data.workDays}</td>
+                    <td style="text-align: center;">${data.totalOtHours}</td>
                     <td>${otPay.toLocaleString('th-TH')} ฿</td>
+                    <td>${baseSalary.toLocaleString('th-TH')} ฿</td>
+                    <td><strong>${totalPay.toLocaleString('th-TH')} ฿</strong></td>
                 </tr>`;
         }
     }
@@ -353,13 +414,13 @@ function generateIndividualReport() {
         alert('กรุณาเลือกพนักงานและช่วงวันที่ให้ครบถ้วน');
         return;
     }
-    
+
     const startDate = new Date(startDateInput);
     startDate.setHours(0, 0, 0, 0);
 
     const endDate = new Date(endDateInput);
     endDate.setHours(0, 0, 0, 0);
-    
+
     const employee = employees.find(emp => emp.scanId == empScanId); 
 
     const filteredRecords = timeRecords.filter(rec => {
@@ -367,7 +428,7 @@ function generateIndividualReport() {
         recDate.setHours(0, 0, 0, 0);
         return rec.scanId == empScanId && recDate >= startDate && recDate <= endDate;
     });
-    
+
     if (!employee || filteredRecords.length === 0) {
         document.getElementById('individualReportResult').innerHTML = '<p>ไม่พบข้อมูลการทำงานของพนักงานในช่วงวันที่ที่เลือก</p>';
         return;
@@ -380,19 +441,25 @@ function generateIndividualReport() {
                 <tr><th>วันที่</th><th>เวลาเข้า</th><th>เวลาออก</th><th>ชั่วโมงทำงาน</th><th>ชั่วโมง OT</th></tr>
             </thead>
             <tbody>`;
-    
+
     let totalWork = 0, totalOT = 0;
     filteredRecords.forEach(rec => {
-        const { workHours, otHours } = calculateWorkHoursAndOT(rec, employee.shift);
+        const { workHours, otHours } = calculateWorkHoursAndOT(rec, employee);
         totalWork += workHours;
         totalOT += otHours;
+
+        // --- [ส่วนที่แก้ไข] ---
+        // ดึงเวลาแรกสุดและท้ายสุดจาก Array 'times' มาแสดงผล
+        const displayTimeIn = rec.times && rec.times.length > 0 ? rec.times[0] : 'N/A';
+        const displayTimeOut = rec.times && rec.times.length > 1 ? rec.times[rec.times.length - 1] : 'N/A';
+        // --- จบส่วนที่แก้ไข ---
+
         tableHTML += `
             <tr>
                 <td>${formatDate(rec.date)}</td>
-                <td>${rec.timeIn}</td>
-                <td>${rec.timeOut}</td>
-                <td>${workHours.toFixed(2)}</td>
-                <td>${otHours}</td>
+                <td>${displayTimeIn}</td>
+                <td>${displayTimeOut}</td>
+                <td>${isNaN(workHours) ? 'Error' : workHours.toFixed(2)}</td> <td>${otHours}</td>
             </tr>`;
     });
 
@@ -406,7 +473,7 @@ function generateIndividualReport() {
                 </tr>
             </tfoot>
         </table>`;
-    
+
     document.getElementById('individualReportResult').innerHTML = tableHTML;
 }
 

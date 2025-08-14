@@ -180,21 +180,32 @@
         }
         
         table {
+            border-collapse: separate;
+            border-spacing: 0;
             width: 100%;
-            border-collapse: collapse;
+            margin-top: 1rem;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            border-radius: 8px;
+            overflow: hidden;
         }
         
-        th {
-            background: linear-gradient(135deg, #667eea, #764ba2);
-            color: white;
-            padding: 15px;
-            text-align: left;
-            font-weight: 600;
-        }
-        
-        td {
+        th, td {
             padding: 12px 15px;
-            border-bottom: 1px solid #e9ecef;
+            text-align: left;
+            border-bottom: 1px solid #e0e0e0;
+        }
+
+        thead th {
+            background-color: #f8f9fa;
+            color: #333;
+            font-weight: 600;
+        }   
+        tbody tr:last-child td {
+            border-bottom: none;
+        }
+        td strong {
+        color: #007bff;
+        font-size: 1.1em;
         }
         
         tr:hover {
