@@ -86,10 +86,12 @@
 
     <script>
         // --- Global State ---
+        const CONSOLIDATION_WINDOW_HOURS = 3;
+        const MAX_SHIFT_HOURS = 16;
         let employees = []; // ข้อมูลพนักงานจะถูกดึงจาก Google Sheet
         let timeRecords = []; // ข้อมูลเวลาดิบที่ถูกประมวลผลแล้ว
 
-        // --- Core Application Logic ---
+
 
         // 1. [เพิ่มใหม่] ฟังก์ชันสำหรับดึงข้อมูลพนักงานจาก Google Sheet
        async function fetchAllEmployeesFromGoogleSheet() {
@@ -189,33 +191,95 @@ function handleFileUpload(input) {
                 return;
             }
 
-            const scanEvents = results.data;
+            const rawScanEvents = results.data;
+            
+            const parseDateTime = (dateStr, timeStr) => {
+                const dateParts = dateStr.split('/');
+                const timeParts = timeStr.split(':');
+                return new Date(dateParts[2], dateParts[1] - 1, dateParts[0], timeParts[0], timeParts[1], timeParts[2]);
+            };
+
+            const sortedScans = rawScanEvents
+                .filter(s => s[idHeader] && s[dateHeader] && s[timeHeader])
+                .sort((a, b) => {
+                    const aDateTime = parseDateTime(a[dateHeader], a[timeHeader]);
+                    const bDateTime = parseDateTime(b[dateHeader], b[timeHeader]);
+                    if (a[idHeader].trim() !== b[idHeader].trim()) {
+                        return a[idHeader].trim().localeCompare(b[idHeader].trim());
+                    }
+                    return aDateTime.getTime() - bDateTime.getTime();
+                });
+
+            const consolidatedScans = [];
+            for (let i = 0; i < sortedScans.length; i++) {
+                let currentScan = sortedScans[i];
+                while (
+                    i + 1 < sortedScans.length &&
+                    sortedScans[i+1][idHeader].trim() === currentScan[idHeader].trim()
+                ) {
+                    const currentScanTime = parseDateTime(currentScan[dateHeader], currentScan[timeHeader]);
+                    const nextScanTime = parseDateTime(sortedScans[i+1][dateHeader], sortedScans[i+1][timeHeader]);
+                    const diffHours = (nextScanTime - currentScanTime) / (1000 * 60 * 60);
+                    if (diffHours < CONSOLIDATION_WINDOW_HOURS) {
+                        i++; 
+                        currentScan = sortedScans[i];
+                    } else {
+                        break;
+                    }
+                }
+                consolidatedScans.push(currentScan);
+            }
+
             const dailyRecords = {};
-            scanEvents.forEach(scan => {
-                const id = scan[idHeader];
-                const date = scan[dateHeader];
-                const time = scan[timeHeader];
+            const employeeLastRecordKey = {}; 
+            
+            consolidatedScans.forEach(scan => {
+                const id = scan[idHeader].trim();
+                const date = scan[dateHeader].trim();
+                const time = scan[timeHeader].trim();
+                
+                const lastKey = employeeLastRecordKey[id];
+                const lastRecord = lastKey ? dailyRecords[lastKey] : null;
 
-                if (!id || !date || !time) return;
+                // --- [ส่วนที่แก้ไข] ปรับปรุง Logic การจับคู่ ---
+                if (lastRecord && lastRecord.times.length % 2 !== 0) {
+                    // ก่อนจะจับคู่ ให้เช็คว่าเวลาห่างกันเกินไปหรือไม่
+                    const lastScanTime = parseDateTime(lastRecord.date, lastRecord.times[lastRecord.times.length - 1]);
+                    const currentScanTime = parseDateTime(date, time);
+                    const diffHours = (currentScanTime - lastScanTime) / (1000 * 60 * 60);
 
-                const key = `${id.trim()}-${date.trim()}`;
-                if (!dailyRecords[key]) {
-                    dailyRecords[key] = { scanId: id.trim(), date: date.trim(), times: [time.trim()] };
+                    if (diffHours > MAX_SHIFT_HOURS) {
+                        // ถ้าห่างเกินไป แสดงว่าลืมสแกนออกของวันก่อนหน้า
+                        lastRecord.incomplete = true; // ทำเครื่องหมายว่าข้อมูลเก่าไม่สมบูรณ์
+                        // แล้วเริ่มวันทำงานใหม่ด้วยข้อมูลปัจจุบัน
+                        const newKey = `${id}-${date}-${time}`; 
+                        dailyRecords[newKey] = { scanId: id, date: date, times: [time], incomplete: false };
+                        employeeLastRecordKey[id] = newKey;
+                    } else {
+                        // ถ้าเวลาปกติ ก็จับคู่ต่อไป
+                        lastRecord.times.push(time);
+                    }
                 } else {
-                    dailyRecords[key].times.push(time.trim());
+                    // เริ่มวันทำงานใหม่ตามปกติ
+                    const newKey = `${id}-${date}-${time}`; 
+                    dailyRecords[newKey] = { scanId: id, date: date, times: [time], incomplete: false };
+                    employeeLastRecordKey[id] = newKey;
+                }
+                // --- จบส่วนที่แก้ไข ---
+            });
+            
+            // [เพิ่มใหม่] วนลูปสุดท้ายเพื่อเช็คอันที่ยังค้างอยู่ (เช่น สแกนเข้าแต่ไม่มีสแกนออกในไฟล์เลย)
+            Object.values(dailyRecords).forEach(rec => {
+                if (rec.times.length % 2 !== 0) {
+                    rec.incomplete = true;
                 }
             });
 
             timeRecords = Object.values(dailyRecords).map(rec => {
-                // --- [ส่วนที่แก้ไข] ---
-                // เปลี่ยน .sort() ธรรมดาเป็นการ sort แบบเปรียบเทียบเวลาจริงๆ
-                rec.times = [...new Set(rec.times)].sort((timeA, timeB) => {
-                    return new Date('1970/01/01 ' + timeA) - new Date('1970/01/01 ' + timeB);
-                });
-                // --- จบส่วนที่แก้ไข ---
+                rec.times = [...new Set(rec.times)]; 
                 return rec;
             });
-
+            
             document.getElementById('uploadResult').innerHTML = `<div class="success">✅ อัปโหลดและประมวลผลไฟล์เรียบร้อย! พบข้อมูล ${timeRecords.length} วันทำงาน</div>`;
             document.getElementById('calculationSection').classList.remove('hidden');
             setTimeout(() => { uploadProgress.classList.add('hidden'); }, 2000);
@@ -229,11 +293,9 @@ function handleFileUpload(input) {
 
         // 3. [เพิ่มใหม่] ฟังก์ชันคำนวณชั่วโมงทำงานและ OT (หัวใจหลัก)
 function calculateWorkHoursAndOT(dailyTimeRecords, employee) {
-    // [LOG] เก็บไว้ตามที่คุณต้องการ
-    // console.log(`[Debug Calc] กำลังคำนวณ ID: ${dailyTimeRecords.scanId} วันที่: ${dailyTimeRecords.date} ด้วยชุดเวลา:`, dailyTimeRecords.times);
-
-    if (!dailyTimeRecords.times || dailyTimeRecords.times.length < 2) {
-        return { workHours: 0, otHours: 0 };
+    // [แก้ไข] ถ้าข้อมูลถูก mark ว่าไม่สมบูรณ์ หรือมี time stamp ไม่ครบ 2 อัน ให้คืนค่าทันที
+    if (dailyTimeRecords.incomplete || !dailyTimeRecords.times || dailyTimeRecords.times.length < 2) {
+        return { workHours: 0, otHours: 0, incomplete: true };
     }
 
     const shifts = {
@@ -247,11 +309,9 @@ function calculateWorkHoursAndOT(dailyTimeRecords, employee) {
     const lastScanTime = dailyTimeRecords.times[dailyTimeRecords.times.length - 1];
 
     if (!firstScanTime || !lastScanTime) {
-        return { workHours: 0, otHours: 0 };
+        return { workHours: 0, otHours: 0, incomplete: true };
     }
 
-    // --- [ส่วนที่แก้ไข] ---
-    // เปลี่ยนวิธีการสร้าง Date object ทั้งหมดให้เป็นรูปแบบที่เสถียรขึ้น
     const timeIn = new Date('1970/01/01 ' + firstScanTime);
     let timeOut = new Date('1970/01/01 ' + lastScanTime);
     if (timeOut < timeIn) { timeOut.setDate(timeOut.getDate() + 1); }
@@ -261,7 +321,6 @@ function calculateWorkHoursAndOT(dailyTimeRecords, employee) {
         if (dailyTimeRecords.times[i+1]) { 
             const scanIn = new Date('1970/01/01 ' + dailyTimeRecords.times[i]);
             let scanOut = new Date('1970/01/01 ' + dailyTimeRecords.times[i+1]);
-
             if (scanOut < scanIn) { scanOut.setDate(scanOut.getDate() + 1); }
             totalWorkMillis += (scanOut - scanIn);
         }
@@ -281,13 +340,11 @@ function calculateWorkHoursAndOT(dailyTimeRecords, employee) {
     }
 
     if (!bestShift) {
-        return { workHours: workHours, otHours: 0 };
+        return { workHours: workHours, otHours: 0, incomplete: false };
     }
 
     const shiftStart = new Date('1970/01/01 ' + bestShift.start);
     let shiftEnd = new Date('1970/01/01 ' + (bestShift.end === '24:00' ? '23:59:59' : bestShift.end));
-    // --- จบส่วนที่แก้ไข ---
-
     if (shiftEnd < shiftStart) { shiftEnd.setDate(shiftEnd.getDate() + 1); }
 
     let otHours = 0;
@@ -303,7 +360,8 @@ function calculateWorkHoursAndOT(dailyTimeRecords, employee) {
         if (lateHours >= 1) { otHours += Math.floor(lateHours); }
     }
 
-    return { workHours: workHours, otHours: otHours };
+    // [แก้ไข] เพิ่ม incomplete: false ในค่าที่คืนปกติ
+    return { workHours: workHours, otHours: otHours, incomplete: false };
 }
 
         // 4. [เพิ่มใหม่] ฟังก์ชันสำหรับสร้างรายงานสรุปผล
@@ -317,15 +375,17 @@ function calculateAndDisplaySummary() {
         return;
     }
 
-    const startDate = new Date(startDateInput);
-    startDate.setHours(0, 0, 0, 0); 
-    const endDate = new Date(endDateInput);
-    endDate.setHours(0, 0, 0, 0); 
+    const reportStartDate = new Date(startDateInput);
+    reportStartDate.setHours(0, 0, 0, 0); 
+    const reportEndDate = new Date(endDateInput);
+    reportEndDate.setHours(23, 59, 59, 999);
 
     const filteredRecords = timeRecords.filter(rec => {
-        const recDate = convertToDate(rec.date);
-        recDate.setHours(0, 0, 0, 0);
-        return recDate >= startDate && recDate <= endDate;
+        const workStartDate = convertToDate(rec.date);
+        workStartDate.setHours(0, 0, 0, 0);
+        const workEndDate = getWorkdayEndDate(rec);
+        workEndDate.setHours(0, 0, 0, 0);
+        return workStartDate <= reportEndDate && workEndDate >= reportStartDate;
     });
     
     if (filteredRecords.length === 0) {
@@ -351,10 +411,14 @@ function calculateAndDisplaySummary() {
                     workDays: 0
                 };
             }
-            const { workHours, otHours } = calculateWorkHoursAndOT(rec, employee);
-            summary[employee.scanId].totalWorkHours += workHours;
-            summary[employee.scanId].totalOtHours += otHours;
-            summary[employee.scanId].workDays++;
+            // --- [ส่วนที่แก้ไข] ตรวจสอบสถานะก่อนบวกค่า ---
+            const { workHours, otHours, incomplete } = calculateWorkHoursAndOT(rec, employee);
+            
+            if (!incomplete) { // คำนวณยอดรวมเฉพาะข้อมูลที่สมบูรณ์เท่านั้น
+                summary[employee.scanId].totalWorkHours += workHours;
+                summary[employee.scanId].totalOtHours += otHours;
+                summary[employee.scanId].workDays++;
+            }
         }
     });
 
@@ -385,17 +449,28 @@ function calculateAndDisplaySummary() {
             const totalPay = baseSalary + otPay;
             const displayName = `${data.name} (${data.nickname.toLowerCase()})`;
 
-            tableHTML += `
-                <tr>
-                    <td>${data.id}</td>
-                    <td>${displayName}</td>
-                    <td>${data.position}</td>
-                    <td style="text-align: center;">${data.workDays}</td>
-                    <td style="text-align: center;">${data.totalOtHours}</td>
-                    <td>${otPay.toLocaleString('th-TH')} ฿</td>
-                    <td>${baseSalary.toLocaleString('th-TH')} ฿</td>
-                    <td><strong>${totalPay.toLocaleString('th-TH')} ฿</strong></td>
-                </tr>`;
+            // [แก้ไข] ถ้าพนักงานมีข้อมูลในช่วงวันที่เลือก แต่ไม่มีวันทำงานที่สมบูรณ์เลย ให้แสดงแถบเตือน
+            if (data.workDays === 0 && filteredRecords.some(r => r.scanId === scanId)) {
+                 tableHTML += `
+                    <tr class="row-incomplete">
+                        <td>${data.id}</td>
+                        <td>${displayName}</td>
+                        <td>${data.position}</td>
+                        <td colspan="5" style="text-align: center;">ข้อมูลการทำงานทั้งหมดไม่สมบูรณ์</td>
+                    </tr>`;
+            } else if (data.workDays > 0) {
+                tableHTML += `
+                    <tr>
+                        <td>${data.id}</td>
+                        <td>${displayName}</td>
+                        <td>${data.position}</td>
+                        <td style="text-align: center;">${data.workDays}</td>
+                        <td style="text-align: center;">${data.totalOtHours}</td>
+                        <td>${otPay.toLocaleString('th-TH')} ฿</td>
+                        <td>${baseSalary.toLocaleString('th-TH')} ฿</td>
+                        <td><strong>${totalPay.toLocaleString('th-TH')} ฿</strong></td>
+                    </tr>`;
+            }
         }
     }
     
@@ -403,8 +478,6 @@ function calculateAndDisplaySummary() {
     document.getElementById('calculationResult').innerHTML = tableHTML;
 }
 
-
-        // 5. [เพิ่มใหม่] ฟังก์ชันสำหรับสร้างรายงานรายบุคคล
 function generateIndividualReport() {
     const empScanId = document.getElementById('report_employee_select').value;
     const startDateInput = document.getElementById('report_start_date').value;
@@ -415,25 +488,27 @@ function generateIndividualReport() {
         return;
     }
 
-    const startDate = new Date(startDateInput);
-    startDate.setHours(0, 0, 0, 0);
-
-    const endDate = new Date(endDateInput);
-    endDate.setHours(0, 0, 0, 0);
+    const reportStartDate = new Date(startDateInput);
+    reportStartDate.setHours(0, 0, 0, 0);
+    const reportEndDate = new Date(endDateInput);
+    reportEndDate.setHours(23, 59, 59, 999);
 
     const employee = employees.find(emp => emp.scanId == empScanId); 
 
     const filteredRecords = timeRecords.filter(rec => {
-        const recDate = convertToDate(rec.date);
-        recDate.setHours(0, 0, 0, 0);
-        return rec.scanId == empScanId && recDate >= startDate && recDate <= endDate;
+        if (rec.scanId != empScanId) return false;
+        const workStartDate = convertToDate(rec.date);
+        workStartDate.setHours(0, 0, 0, 0);
+        const workEndDate = getWorkdayEndDate(rec);
+        workEndDate.setHours(0, 0, 0, 0);
+        return workStartDate <= reportEndDate && workEndDate >= reportStartDate;
     });
 
     if (!employee || filteredRecords.length === 0) {
         document.getElementById('individualReportResult').innerHTML = '<p>ไม่พบข้อมูลการทำงานของพนักงานในช่วงวันที่ที่เลือก</p>';
         return;
     }
-
+    
     let tableHTML = `
         <h4>รายงานของ: ${employee.NAME} (${formatDate(startDateInput)} - ${formatDate(endDateInput)})</h4>
         <table>
@@ -444,30 +519,41 @@ function generateIndividualReport() {
 
     let totalWork = 0, totalOT = 0;
     filteredRecords.forEach(rec => {
-        const { workHours, otHours } = calculateWorkHoursAndOT(rec, employee);
-        totalWork += workHours;
-        totalOT += otHours;
+        const { workHours, otHours, incomplete } = calculateWorkHoursAndOT(rec, employee);
 
-        // --- [ส่วนที่แก้ไข] ---
-        // ดึงเวลาแรกสุดและท้ายสุดจาก Array 'times' มาแสดงผล
-        const displayTimeIn = rec.times && rec.times.length > 0 ? rec.times[0] : 'N/A';
-        const displayTimeOut = rec.times && rec.times.length > 1 ? rec.times[rec.times.length - 1] : 'N/A';
+        // --- [ส่วนที่แก้ไข] ตรวจสอบสถานะก่อนบวกค่าและแสดงผล ---
+        if (incomplete) {
+            const displayTimeIn = rec.times && rec.times.length > 0 ? rec.times[0] : 'N/A';
+            const displayTimeOut = rec.times && rec.times.length > 1 ? rec.times[rec.times.length - 1] : 'N/A';
+            tableHTML += `
+                <tr class="row-incomplete">
+                    <td>${formatDate(rec.date)}</td>
+                    <td>${displayTimeIn}</td>
+                    <td>${displayTimeOut}</td>
+                    <td colspan="2">ข้อมูลไม่สมบูรณ์</td>
+                </tr>`;
+        } else {
+            totalWork += workHours;
+            totalOT += otHours;
+            const displayTimeIn = rec.times[0];
+            const displayTimeOut = rec.times[rec.times.length - 1];
+            tableHTML += `
+                <tr>
+                    <td>${formatDate(rec.date)}</td>
+                    <td>${displayTimeIn}</td>
+                    <td>${displayTimeOut}</td>
+                    <td>${workHours.toFixed(2)}</td>
+                    <td>${otHours}</td>
+                </tr>`;
+        }
         // --- จบส่วนที่แก้ไข ---
-
-        tableHTML += `
-            <tr>
-                <td>${formatDate(rec.date)}</td>
-                <td>${displayTimeIn}</td>
-                <td>${displayTimeOut}</td>
-                <td>${isNaN(workHours) ? 'Error' : workHours.toFixed(2)}</td> <td>${otHours}</td>
-            </tr>`;
     });
 
     tableHTML += `
             </tbody>
             <tfoot>
                 <tr>
-                    <td colspan="3"><strong>รวม</strong></td>
+                    <td colspan="3"><strong>รวม (เฉพาะข้อมูลที่สมบูรณ์)</strong></td>
                     <td><strong>${totalWork.toFixed(2)}</strong></td>
                     <td><strong>${totalOT}</strong></td>
                 </tr>
@@ -496,6 +582,22 @@ function generateIndividualReport() {
             });
         }
         
+        function getWorkdayEndDate(record) {
+            const startDate = convertToDate(record.date);
+            if (!record.times || record.times.length < 2) {
+                return startDate; // ถ้าข้อมูลไม่ครบ ให้คืนวันที่เริ่มไปก่อน
+            }
+            const timeIn = new Date('1970/01/01 ' + record.times[0]);
+            const timeOut = new Date('1970/01/01 ' + record.times[record.times.length - 1]);
+
+            if (timeOut < timeIn) { // ตรวจสอบการทำงานข้ามวัน
+                const endDate = new Date(startDate);
+                endDate.setDate(startDate.getDate() + 1); // บวกไปอีก 1 วัน
+                return endDate;
+            }
+            return startDate; // วันเดียวกัน
+        }
+
         function convertToDate(dmyString) { // dd/mm/yyyy
             const parts = dmyString.split('/');
             return new Date(parts[2], parts[1] - 1, parts[0]);

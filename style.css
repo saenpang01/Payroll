@@ -299,6 +299,12 @@
             margin-bottom: 20px;
         }
         
+        .row-incomplete td {
+        background-color: #fff0f0 !important; /* สีแดงอ่อน */
+        color: #d00 !important;
+        font-style: italic;
+        }
+        
         @media (max-width: 768px) {
             .container {
                 padding: 20px;
