@@ -1,461 +1,508 @@
-// =================================================================
-//                 ระบบคำนวณเงินเดือน - เวอร์ชันใช้งานจริง
-// =================================================================
+         // --- 1. Global State ---
+        const CONSOLIDATION_WINDOW_HOURS = 3;
+        let employees = [];
+        let timeRecords = [];
+        let orphanScans = [];
 
-// --- 1. Global State: ตัวแปรหลักสำหรับเก็บข้อมูล ---
-let employees = [];
-let timeRecords = [];
-let payrollResults = [];
+        // --- 2. Core Application Logic ---
 
-// --- 2. Firebase/LocalStorage Data Functions ---
-// หมายเหตุ: ส่วนนี้จะทำงานเมื่อคุณใส่ Firebase Config ของคุณ
-// ถ้ายังไม่ใส่ จะใช้ LocalStorage เป็นตัวสำรองชั่วคราว
-const firebaseConfig = {
-  apiKey: "AIzaSyALdFBe881BJSwU7b9MukWDIBEWKESO7OA",
-  authDomain: "payroll-54e6f.firebaseapp.com",
-  projectId: "payroll-54e6f",
-  storageBucket: "payroll-54e6f.firebasestorage.app",
-  messagingSenderId: "1042079082074",
-  appId: "1:1042079082074:web:f12af17e927e6116185a63"
-};
+        async function fetchAllEmployeesFromGoogleSheet() {
+            const monthlySheetURL = 'https://docs.google.com/spreadsheets/d/e/2PACX-1vTPeXCWESqvqiaslhR8j-YvPBsPUi8RGDX8GKJ9w4XrUSbjrp2OotRG9zFz2oRdIFooVk7RVVKTD1cL/pub?gid=166039384&single=true&output=csv';
+            const dailySheetURL = 'https://docs.google.com/spreadsheets/d/e/2PACX-1vTPeXCWESqvqiaslhR8j-YvPBsPUi8RGDX8GKJ9w4XrUSbjrp2OotRG9zFz2oRdIFooVk7RVVKTD1cL/pub?gid=1323019072&single=true&output=csv';
 
-let db;
-try {
-    if (firebaseConfig.apiKey && firebaseConfig.apiKey !== "AIzaSy...YOUR_API_KEY") {
-        firebase.initializeApp(firebaseConfig);
-        db = firebase.firestore();
-        console.log("Firebase initialized successfully!");
-    }
-} catch (e) {
-    console.error("Firebase initialization failed. Using LocalStorage as fallback.", e);
-}
+            const processSheetData = (csvText, employeeType) => {
+                const result = Papa.parse(csvText, { header: true, skipEmptyLines: true });
+                if (!result.data.length || !result.meta.fields) return [];
+                const requiredKeys = ['id', 'scanid', 'name', 'salary'];
+                const fieldMap = {};
+                result.meta.fields.forEach(f => {
+                    const cleanField = f.trim().toLowerCase();
+                    if (requiredKeys.includes(cleanField)) fieldMap[cleanField] = f;
+                    if (cleanField === 'nickname') fieldMap.nickname = f;
+                    if (cleanField === 'position') fieldMap.position = f;
+                });
 
-async function saveData(employeeData) {
-    if (db) { // ถ้าเชื่อมต่อ Firebase อยู่ ให้ใช้ Firestore
-        try {
-            await db.collection("employees").doc(employeeData.id).set(employeeData);
-        } catch (error) {
-            console.error("Error saving to Firebase:", error);
+                if (requiredKeys.some(key => !fieldMap[key])) {
+                     console.error(`Missing required columns in sheet: ${employeeType}`);
+                     return [];
+                }
+                return result.data.map(emp => ({
+                    ID: emp[fieldMap.id]?.trim() || 'N/A',
+                    scanId: emp[fieldMap.scanid]?.trim() || '',
+                    NAME: emp[fieldMap.name]?.trim() || 'N/A',
+                    SALARY: emp[fieldMap.salary]?.trim() || '0',
+                    NICKNAME: emp[fieldMap.nickname]?.trim() || '',
+                    POSITION: emp[fieldMap.position]?.trim() || '',
+                    type: employeeType
+                }));
+            };
+            try {
+                const [monthlyResults, dailyResults] = await Promise.all([
+                    fetch(monthlySheetURL).then(res => res.ok ? res.text() : Promise.reject(`Monthly sheet fetch failed: ${res.statusText}`)),
+                    fetch(dailySheetURL).then(res => res.ok ? res.text() : Promise.reject(`Daily sheet fetch failed: ${res.statusText}`))
+                ]);
+                employees = [...processSheetData(monthlyResults, 'รายเดือน'), ...processSheetData(dailyResults, 'รายวัน')];
+                if (employees.length > 0) {
+                    showMessage('upload', `✅ โหลดข้อมูลพนักงาน ${employees.length} คนสำเร็จ!`, 'success');
+                    populateEmployeeDropdown();
+                } else {
+                    showMessage('upload', `❌ ไม่สามารถโหลดข้อมูลพนักงานได้`, 'error');
+                }
+            } catch (error) {
+                console.error('Error fetching from Google Sheet:', error);
+                showMessage('upload', '❌ เกิดข้อผิดพลาดในการดึงข้อมูลพนักงาน', 'error');
+            }
         }
-    } else { // ถ้าไม่ ให้ใช้ LocalStorage
-        const existingIndex = employees.findIndex(emp => emp.id === employeeData.id);
-        if (existingIndex > -1) {
-            employees[existingIndex] = employeeData;
-        } else {
-            employees.push(employeeData);
-        }
-        localStorage.setItem('payroll_app_employees', JSON.stringify(employees));
-    }
-}
-
-async function loadData() {
-    if (db) {
-        try {
-            const snapshot = await db.collection("employees").get();
-            const loadedEmployees = [];
-            snapshot.forEach(doc => loadedEmployees.push(doc.data()));
-            employees = loadedEmployees;
-        } catch (error) {
-            console.error("Error loading from Firebase:", error);
-        }
-    } else {
-        const employeesData = localStorage.getItem('payroll_app_employees');
-        if (employeesData) {
-            employees = JSON.parse(employeesData);
-        }
-    }
-}
-
-async function deleteData(empId) {
-    if (db) {
-        try {
-            await db.collection("employees").doc(empId).delete();
-        } catch (error) {
-            console.error("Error deleting from Firebase:", error);
-        }
-    } else {
-        employees = employees.filter(emp => emp.id !== empId);
-        localStorage.setItem('payroll_app_employees', JSON.stringify(employees));
-    }
-}
-
-
-// --- 3. DOM Ready: สั่งให้ทำงานทันทีที่เปิดหน้าเว็บ ---
-document.addEventListener('DOMContentLoaded', async () => {
-    await loadData();
-    const today = new Date();
-    const month = (today.getMonth() + 1).toString().padStart(2, '0');
-    const year = today.getFullYear();
-    const payrollMonthElem = document.getElementById('payrollMonth');
-    if (payrollMonthElem) payrollMonthElem.value = `${year}-${month}`;
-    updateEmployeeTable();
-    updateReportSummary();
-});
-
-// --- 4. Tab Management ---
-function showTab(tabName, clickedButton) {
-    document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
-    document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
-    const tabContent = document.getElementById(tabName);
-    if (tabContent) tabContent.classList.add('active');
-    if (clickedButton) clickedButton.classList.add('active');
-}
-
-// script.js (แก้ไขฟังก์ชันนี้ให้ถูกต้อง)
-
-function updateTimeRecordsTable() {
-    const displayDiv = document.getElementById('timeRecordsDisplay');
-    if (!displayDiv) return;
-
-    // สร้างตารางและส่วนหัว (Header)
-    let tableHtml = `
-        <h3>ข้อมูลดิบจากไฟล์ CSV (ประมวลผลแล้ว)</h3>
-        <table class="styled-table">
-            <thead>
-                <tr>
-                    <th>รหัสพนักงาน</th>
-                    <th>วันที่</th>
-                    <th>เวลาเข้า</th>
-                    <th>เวลาออก</th>
-                    <th>จำนวนสแกน</th>
-                </tr>
-            </thead>
-            <tbody>
-    `;
-
-    // ถ้าไม่มีข้อมูล ให้แสดงข้อความ
-    if (timeRecords.length === 0) {
-        tableHtml += `<tr><td colspan="5">กรุณาอัปโหลดไฟล์ CSV เพื่อดูข้อมูล</td></tr>`;
-    } else {
-        // วนลูปสร้างแต่ละแถวของข้อมูล
-        timeRecords.forEach(rec => {
-            tableHtml += `
-                <tr>
-                    <td>${rec.id}</td>
-                    <td>${rec.date}</td>
-                    
-                    <td><strong>${rec.timeIn}</strong></td>  
-                    <td><strong>${rec.timeOut}</strong></td>
-                    <td>${rec.scanCount} ครั้ง</td>
-                </tr>
-            `;
-        });
-    }
-
-    tableHtml += `</tbody></table>`;
-    displayDiv.innerHTML = tableHtml;
-}
-// --- 5. CSV Upload ---
 
 function handleFileUpload(input) {
     const file = input.files[0];
     if (!file) return;
 
+    // 1. --- Reset State ---
+    timeRecords = [];
+    orphanScans = [];
+    document.getElementById('calculationResult').innerHTML = '';
+    document.getElementById('individualReportResult').innerHTML = '';
+    document.getElementById('errorReportContainer').innerHTML = '';
+    
+    const uploadProgress = document.getElementById('uploadProgress');
+    uploadProgress.classList.remove('hidden');
+    document.getElementById('progressFill').style.width = '0%';
+    document.getElementById('progressText').textContent = 'กำลังประมวลผล...';
+
     Papa.parse(file, {
         header: true,
         skipEmptyLines: true,
         complete: function(results) {
-            // ค้นหา Header แบบยืดหยุ่น
-            const findHeader = (fields, names) => fields.find(h => h && names.includes(h.trim().toLowerCase()));
-            
-            // ใช้ชื่อ header จากไฟล์จริง 'sJobNo', 'Date', 'Time'
-            const idHeader = findHeader(results.meta.fields, ['sjobno']); 
-            const dateHeader = findHeader(results.meta.fields, ['date']);
-            const timeHeader = findHeader(results.meta.fields, ['time']);
+            document.getElementById('progressFill').style.width = '100%';
+            document.getElementById('progressText').textContent = 'ประมวลผลเสร็จสิ้น';
+
+            const idHeader = results.meta.fields.find(h => h && h.trim().toLowerCase() === 'sjobno');
+            const dateHeader = results.meta.fields.find(h => h && h.trim().toLowerCase() === 'date');
+            const timeHeader = results.meta.fields.find(h => h && h.trim().toLowerCase() === 'time');
 
             if (!idHeader || !dateHeader || !timeHeader) {
-                alert('ไฟล์ CSV ไม่ถูกต้อง! ไม่พบ Header sJobNo, Date, หรือ Time');
+                showMessage('upload', `ไฟล์ CSV ไม่ถูกต้อง! ไม่พบคอลัมน์ sJobNo, Date, Time`, 'error');
+                uploadProgress.classList.add('hidden');
                 return;
             }
 
-            const dailyRecords = {};
-            results.data.forEach(scan => {
-                const id = scan[idHeader];
-                const date = scan[dateHeader];
-                const time = scan[timeHeader];
+            const parseDateTime = (dateStr, timeStr) => {
+                const dateParts = dateStr.split('/');
+                const timeParts = timeStr.split(':');
+                return new Date(dateParts[2], dateParts[1] - 1, dateParts[0], timeParts[0], timeParts[1], timeParts[2]);
+            };
 
-                // ตรวจสอบข้อมูลสำคัญ
-                if (!id || id.trim() === '0' || !date || !time) return;
+            const sortedScans = results.data
+                .filter(s => s[idHeader] && s[dateHeader] && s[timeHeader])
+                .sort((a, b) => {
+                    const aDateTime = parseDateTime(a[dateHeader], a[timeHeader]);
+                    const bDateTime = parseDateTime(b[dateHeader], b[timeHeader]);
+                    if (a[idHeader].trim() !== b[idHeader].trim()) {
+                        return a[idHeader].trim().localeCompare(b[idHeader].trim());
+                    }
+                    return aDateTime.getTime() - bDateTime.getTime();
+                });
 
-                const key = `${id}-${date}`;
-                if (!dailyRecords[key]) {
-                    dailyRecords[key] = {
-                        id,
-                        date,
-                        times: [] // เปลี่ยนชื่อเป็น times ให้สื่อความหมาย
-                    };
+            // --- [VIBE-CODE] ส่วนของ Consolidate Scans ที่ขาดหายไป ---
+            const consolidatedScans = [];
+            for (let i = 0; i < sortedScans.length; i++) {
+                let currentScan = sortedScans[i];
+                while (
+                    i + 1 < sortedScans.length &&
+                    sortedScans[i+1][idHeader].trim() === currentScan[idHeader].trim()
+                ) {
+                    const currentScanTime = parseDateTime(currentScan[dateHeader], currentScan[timeHeader]);
+                    const nextScanTime = parseDateTime(sortedScans[i+1][dateHeader], sortedScans[i+1][timeHeader]);
+                    const diffHours = (nextScanTime - currentScanTime) / (1000 * 60 * 60);
+                    if (diffHours < CONSOLIDATION_WINDOW_HOURS) {
+                        i++; 
+                        currentScan = sortedScans[i];
+                    } else {
+                        break;
+                    }
                 }
-                dailyRecords[key].times.push(time);
-            });
+                consolidatedScans.push(currentScan);
+            }
+            // --- จบส่วนที่ขาดหายไป ---
 
-            // ประมวลผลเวลาเข้า-ออกที่ถูกต้อง
-            timeRecords = Object.values(dailyRecords).map(rec => {
-                rec.times.sort(); // เรียงลำดับเวลาจากน้อยไปมาก
-                const timeIn = rec.times[0];
-                const timeOut = (rec.times.length > 1) ? rec.times[rec.times.length - 1] : timeIn;
-                
-                return {
-                    id: rec.id,
-                    date: rec.date,
-                    timeIn: timeIn,   // เวลาเข้าที่ถูกต้อง
-                    timeOut: timeOut, // เวลาออกที่ถูกต้อง
-                    scanCount: rec.times.length
-                };
-            });
+            const scansByEmployee = consolidatedScans.reduce((acc, scan) => {
+                const id = scan[idHeader].trim();
+                if (!acc[id]) acc[id] = [];
+                acc[id].push(scan);
+                return acc;
+            }, {});
+            
+            const LATE_SCAN_CUTOFF_HOUR = 18;
+            const LATE_SCAN_CUTOFF_MINUTE = 30;
 
-            alert(`อัปโหลดสำเร็จ! พบข้อมูลการทำงาน ${timeRecords.length} รายการ`);
-            updateTimeRecordsTable();
+            for (const id in scansByEmployee) {
+                const employeeScans = scansByEmployee[id];
+                let inScanRecord = null;
+
+                employeeScans.forEach(scan => {
+                    const scanTime = parseDateTime(scan[dateHeader], scan[timeHeader]);
+
+                    if (!inScanRecord) {
+                        if (scanTime.getHours() > LATE_SCAN_CUTOFF_HOUR || (scanTime.getHours() === LATE_SCAN_CUTOFF_HOUR && scanTime.getMinutes() > LATE_SCAN_CUTOFF_MINUTE)) {
+                            timeRecords.push({
+                                scanId: id,
+                                date: scan[dateHeader].trim(),
+                                times: [scan[timeHeader].trim()],
+                                incomplete: true,
+                                problem: 'Forgot IN'
+                            });
+                        } else {
+                            inScanRecord = scan;
+                        }
+                    } else {
+                        timeRecords.push({
+                            scanId: id,
+                            date: inScanRecord[dateHeader].trim(),
+                            times: [inScanRecord[timeHeader].trim(), scan[timeHeader].trim()],
+                            incomplete: false,
+                            problem: null
+                        });
+                        inScanRecord = null;
+                    }
+                });
+
+                if (inScanRecord) {
+                    timeRecords.push({
+                        scanId: id,
+                        date: inScanRecord[dateHeader].trim(),
+                        times: [inScanRecord[timeHeader].trim()],
+                        incomplete: true,
+                        problem: 'Forgot OUT'
+                    });
+                }
+            }
+            
+            timeRecords.sort((a,b) => convertToDate(a.date) - convertToDate(b.date));
+
+            document.getElementById('uploadResult').innerHTML = `<div class="success">✅ ประมวลผลสำเร็จ! พบข้อมูลทั้งหมด ${timeRecords.length} รายการ</div>`;
+            document.getElementById('calculationSection').classList.remove('hidden');
+            
+            setTimeout(() => { uploadProgress.classList.add('hidden'); }, 2000);
+        },
+        error: (err) => {
+            showMessage('upload', `เกิดข้อผิดพลาดในการอ่านไฟล์: ${err.message}`, 'error');
+            uploadProgress.classList.add('hidden');
         }
     });
 }
 
+function calculateWorkHoursAndOT(dailyTimeRecords, employee) {
+    if (!dailyTimeRecords.times || dailyTimeRecords.times.length < 2) {
+        return { workHours: 0, otHours: 0, otWarning: false, totalDurationMilliseconds: 0 };
+    }
 
+    const timeIn = new Date('1970/01/01 ' + dailyTimeRecords.times[0]);
+    let timeOut = new Date('1970/01/01 ' + dailyTimeRecords.times[1]);
+    if (timeOut < timeIn) { timeOut.setDate(timeOut.getDate() + 1); }
+    
+    // [VIBE-CODE] เก็บค่าผลต่างของเวลาดิบเป็นมิลลิวินาที
+    const totalDurationMilliseconds = timeOut - timeIn;
+    
+    // 1. คำนวณชั่วโมงทำงานดิบ (ยังไม่หักพัก)
+    let workHours = totalDurationMilliseconds / (1000 * 60 * 60);
+    
+    // 2. หักเวลาพักเที่ยง 1 ชั่วโมง
+    const BREAK_DEDUCTION_THRESHOLD = 6;
+    if (workHours > BREAK_DEDUCTION_THRESHOLD) {
+        workHours -= 1;
+    }
 
-// --- 6. Employee Management ---
-async function addEmployee() {
-    const empId = document.getElementById('empId').value.trim();
-    const empName = document.getElementById('empName').value.trim();
-    if (!empId || !empName) { alert('กรุณากรอกรหัสและชื่อพนักงาน'); return; }
-    const employeeData = {
-        id: empId, name: empName,
-        salary: document.getElementById('empSalary').value || 0,
-        type: document.getElementById('empType').value || 'monthly',
-        email: document.getElementById('empEmail').value || '',
-        account: document.getElementById('empAccount').value || ''
+    // 3. คำนวณ OT
+    let otHours = 0;
+    let otWarning = false;
+    const STANDARD_WORK_HOURS = 8;
+
+    if (workHours > STANDARD_WORK_HOURS) {
+        const rawOtHours = workHours - STANDARD_WORK_HOURS;
+        otHours = Math.floor(rawOtHours);
+
+        const otMinutesFraction = (rawOtHours - otHours) * 60;
+        if (otMinutesFraction >= 55 && otMinutesFraction < 60) {
+            otWarning = true;
+        }
+
+        if (otHours > 3) {
+            otHours = 3;
+        }
+    }
+
+    // [VIBE-CODE] คืนค่า totalDurationMilliseconds เพิ่มเข้าไป
+    return { 
+        workHours: workHours, 
+        otHours: otHours, 
+        otWarning: otWarning,
+        totalDurationMilliseconds: totalDurationMilliseconds 
     };
-    await saveData(employeeData);
-    await loadData();
-    updateEmployeeTable();
-    const empForm = document.getElementById('empForm');
-    if (empForm) empForm.reset();
 }
 
-function updateEmployeeTable() {
-    const tableBody = document.getElementById('employeeTableBody'); if (!tableBody) return;
-    tableBody.innerHTML = '';
-    employees.forEach(emp => {
-        const row = tableBody.insertRow();
-        row.innerHTML = `<td>${emp.id}</td><td>${emp.name}</td><td>${emp.type}</td><td>${parseFloat(emp.salary).toLocaleString('th-TH')}</td><td><button onclick="editEmployee('${emp.id}')">แก้ไข</button><button onclick="deleteEmployee('${emp.id}')">ลบ</button></td>`;
-    });
-}
+        function calculateAndDisplaySummary() {
+            const startDateInput = document.getElementById('calc_start_date').value;
+            const endDateInput = document.getElementById('calc_end_date').value;
+            const otRate = parseFloat(document.getElementById('otRate').value) || 50;
 
-function editEmployee(empId) {
-    const emp = employees.find(e => e.id === empId);
-    if (emp) {
-        document.getElementById('empId').value = emp.id;
-        document.getElementById('empName').value = emp.name;
-        document.getElementById('empType').value = emp.type;
-        document.getElementById('empSalary').value = emp.salary;
-        document.getElementById('empEmail').value = emp.email;
-        document.getElementById('empAccount').value = emp.account;
-    }
-}
-
-async function deleteEmployee(empId) {
-    const emp = employees.find(e => e.id === empId);
-    if (emp && confirm(`ต้องการลบพนักงาน ${emp.name}?`)) {
-        await deleteData(empId);
-        await loadData();
-        updateEmployeeTable();
-        updateReportSummary();
-    }
-}
-
-// --- 7. Payroll Calculation ---
-function calculatePayroll() {
-    const payrollMonthInput = document.getElementById('payrollMonth').value;
-    if (!payrollMonthInput) {
-        alert('กรุณาเลือกเดือนที่ต้องการคำนวณ');
-        return;
-    }
-    if (timeRecords.length === 0) {
-        alert('กรุณาอัปโหลดข้อมูลเวลาทำงานก่อน');
-        return;
-    }
-
-    const [year, month] = payrollMonthInput.split('-');
-    payrollResults = [];
-
-    employees.forEach(emp => {
-        // กรองข้อมูลเวลาของพนักงานในเดือนที่เลือก
-        const empTimeRecords = timeRecords.filter(record => {
-            // การแปลงรูปแบบวันที่ 'd/M/yyyy' เป็น 'yyyy-MM' เพื่อเปรียบเทียบ
-            const dateParts = record.date.split('/');
-            if (dateParts.length !== 3) return false;
-            // สร้างปีเต็มจาก 2 หลักสุดท้าย เช่น 25 -> 2025
-            const recordYear = `20${dateParts[2]}`; 
-            const recordMonth = dateParts[1].padStart(2, '0');
-            
-            return record.id === emp.id && recordMonth === month && recordYear === year;
-        });
-        
-        // ใช้ข้อมูลที่กรองได้มาคำนวณโดยตรง
-        const totalWorkDays = empTimeRecords.length;
-        let totalWorkHours = 0;
-        let totalOtHours = 0;
-
-        empTimeRecords.forEach(record => {
-            if (record.timeIn && record.timeOut && record.timeIn !== record.timeOut) {
-                const timeIn = new Date(`1970-01-01T${record.timeIn}`);
-                const timeOut = new Date(`1970-01-01T${record.timeOut}`);
-                let workHours = (timeOut - timeIn) / 3600000;
-                if (workHours < 0) workHours += 24; // กรณีข้ามคืน
-
-                totalWorkHours += workHours;
-
-                // คำนวณ OT หากทำงานเกิน 8 ชม. ต่อวัน
-                if (workHours > 8) {
-                    totalOtHours += (workHours - 8);
-                }
+            if (!startDateInput || !endDateInput) {
+                alert('กรุณาเลือกช่วงวันที่สำหรับคำนวณ');
+                return;
             }
-        });
 
-        const salary = parseFloat(emp.salary);
-        const grossSalary = (emp.type === 'monthly') ? salary : salary * totalWorkDays;
-        const hourlyRate = (emp.type === 'monthly' ? salary / 30 : salary) / 8;
-        const otPay = totalOtHours * hourlyRate * 1.5;
-        const totalSalary = grossSalary + otPay;
+            const reportStartDate = new Date(startDateInput);
+            reportStartDate.setHours(0, 0, 0, 0); 
+            const reportEndDate = new Date(endDateInput);
+            reportEndDate.setHours(23, 59, 59, 999);
 
-        payrollResults.push({
-            id: emp.id,
-            name: emp.name,
-            workDays: totalWorkDays,
-            workHours: totalWorkHours,
-            otHours: totalOtHours,
-            grossSalary,
-            otPay,
-            totalSalary
-        });
-    });
+            const filteredRecords = timeRecords.filter(rec => {
+                const workDate = convertToDate(rec.date);
+                workDate.setHours(0,0,0,0);
+                return workDate >= reportStartDate && workDate <= reportEndDate;
+            });
+            
+            if (filteredRecords.length === 0) {
+                document.getElementById('calculationResult').innerHTML = '<p style="color: #cc0000; text-align: center; margin-top: 1rem;">ไม่พบข้อมูลการทำงานที่สมบูรณ์ในช่วงวันที่ที่คุณเลือก</p>';
+                return; 
+            }
 
-    updateReportTable();
-    updateReportSummary();
-    alert('คำนวณเงินเดือนและอัปเดตรายงานเรียบร้อย!');
-}
+            const summary = {};
+            filteredRecords.forEach(rec => {
+                const employee = employees.find(emp => emp.scanId == rec.scanId); 
+                if (employee) {
+                    if (!summary[employee.scanId]) {
+                        summary[employee.scanId] = {
+                            id: employee.ID, name: employee.NAME, nickname: employee.NICKNAME, position: employee.POSITION,
+                            type: employee.type, salary: parseFloat(employee.SALARY.replace(/[^\d.-]/g, '')) || 0,
+                            totalOtHours: 0, workDays: 0
+                        };
+                    }
+                    const { otHours } = calculateWorkHoursAndOT(rec, employee);
+                    summary[employee.scanId].totalOtHours += otHours;
+                    summary[employee.scanId].workDays++;
+                }
+            });
 
-// --- 8. Reports ---
-function updateReportSummary() {
-    const totalEmployeesElem = document.getElementById('totalEmployees');
-    const totalSalaryElem = document.getElementById('totalSalary');
-    const totalOTElem = document.getElementById('totalOT');
-    const avgWorkDaysElem = document.getElementById('avgWorkDays');
-    if (totalEmployeesElem) totalEmployeesElem.textContent = `${employees.length} คน`;
-    const totalSalary = payrollResults.reduce((sum, r) => sum + r.totalSalary, 0);
-    const totalOT = payrollResults.reduce((sum, r) => sum + r.otHours, 0);
-    const totalDays = payrollResults.reduce((sum, r) => sum + r.workDays, 0);
-    const avgDays = employees.length > 0 ? (totalDays / employees.length) : 0;
-    if (totalSalaryElem) totalSalaryElem.textContent = `${totalSalary.toLocaleString('th-TH', {minimumFractionDigits: 2})} บาท`;
-    if (totalOTElem) totalOTElem.textContent = `${totalOT.toFixed(2)} ชม.`;
-    if (avgWorkDaysElem) avgWorkDaysElem.textContent = `${avgDays.toFixed(1)} วัน`;
-}
+            let tableHTML = `
+                <h4>สรุปผลการคำนวณ (${formatDate(startDateInput)} - ${formatDate(endDateInput)})</h4>
+                <table>
+                    <thead>
+                        <tr><th>ID</th><th>ชื่อพนักงาน</th><th>ตำแหน่ง</th><th>วันทำงาน</th><th>ชม.OT</th><th>ค่า OT</th><th>ฐานเงินเดือน</th><th>ยอดจ่ายสุทธิ</th></tr>
+                    </thead>
+                    <tbody>`;
+            
+            Object.values(summary).sort((a,b) => a.id.localeCompare(b.id)).forEach(data => {
+                const otPay = data.totalOtHours * otRate;
+                const baseSalary = data.type === 'รายวัน' ? data.salary * data.workDays : data.salary;
+                const totalPay = baseSalary + otPay;
+                const displayName = `${data.name} (${data.nickname.toLowerCase()})`;
+                tableHTML += `
+                    <tr>
+                        <td>${data.id}</td><td>${displayName}</td><td>${data.position}</td>
+                        <td style="text-align: center;">${data.workDays}</td>
+                        <td style="text-align: center;">${data.totalOtHours}</td>
+                        <td>${otPay.toLocaleString('th-TH')} ฿</td>
+                        <td>${baseSalary.toLocaleString('th-TH')} ฿</td>
+                        <td><strong>${totalPay.toLocaleString('th-TH')} ฿</strong></td>
+                    </tr>`;
+            });
+            
+            tableHTML += '</tbody></table>';
+            document.getElementById('calculationResult').innerHTML = tableHTML;
+        }
 
-function updateReportTable() {
-    const tableBody = document.getElementById('reportTable');
-    if (!tableBody) return;
-    tableBody.innerHTML = '';
-    if (payrollResults.length === 0) {
-        tableBody.innerHTML = `<tr><td colspan="9">ยังไม่มีข้อมูลการคำนวณ</td></tr>`; // เพิ่ม colspan เป็น 9
-        return;
-    }
-    payrollResults.forEach(result => {
-        const row = tableBody.insertRow();
-        // เพิ่มคอลัมน์ใหม่สำหรับปุ่ม
-        row.innerHTML = `
-            <td>${result.id}</td><td>${result.name}</td>
-            <td>${result.workDays}</td><td>${result.workHours.toFixed(2)}</td>
-            <td>${result.otHours.toFixed(2)}</td>
-            <td>${result.grossSalary.toLocaleString('th-TH')}</td>
-            <td>${result.otPay.toFixed(2)}</td>
-            <td><strong>${result.totalSalary.toLocaleString('th-TH', {minimumFractionDigits: 2})}</strong></td>
-            <td><button class="btn-payslip" onclick="generatePayslip('${result.id}')">📄 ดูสลิป</button></td>
-        `;
-    });
-}
+        function generateIndividualReport() {
+    // ดึงค่าจาก input fields บนหน้าเว็บ
+    const empScanId = document.getElementById('report_employee_select').value;
+    const startDateInput = document.getElementById('report_start_date').value;
+    const endDateInput = document.getElementById('report_end_date').value;
 
-//=================================================================
-// 9. Payslip Generation: ฟังก์ชันใหม่สำหรับสร้างสลิป PDF
-// =================================================================
-function generatePayslip(employeeId) {
-    const { jsPDF } = window.jspdf;
-    const result = payrollResults.find(r => r.id === employeeId);
-    const employee = employees.find(e => e.id === employeeId);
-
-    if (!result || !employee) {
-        alert("ไม่พบข้อมูลสำหรับสร้างสลิปของพนักงานรหัส: " + employeeId);
+    // ตรวจสอบว่าผู้ใช้กรอกข้อมูลครบถ้วนหรือไม่
+    if (!empScanId || !startDateInput || !endDateInput) {
+        alert('กรุณาเลือกพนักงานและช่วงวันที่ให้ครบถ้วน');
         return;
     }
 
-    const doc = new jsPDF();
-    const payrollMonth = document.getElementById('payrollMonth').value;
-    const [year, month] = payrollMonth.split('-');
-    const issueDate = new Date().toLocaleDateString('th-TH');
+    // กำหนดช่วงวันที่สำหรับการกรองข้อมูล
+    const reportStartDate = new Date(startDateInput);
+    reportStartDate.setHours(0, 0, 0, 0);
+    const reportEndDate = new Date(endDateInput);
+    reportEndDate.setHours(23, 59, 59, 999);
 
-    // --- ตั้งค่า Font (สำคัญมากสำหรับภาษาไทย) ---
-    // หมายเหตุ: jsPDF ไม่รองรับภาษาไทยโดยตรง เราจะใช้วิธีแสดงผลเป็นภาษาอังกฤษ
-    // หากต้องการภาษาไทยสมบูรณ์ จะต้องใช้ library เพิ่มเติมเช่น "jspdf-autotable" พร้อม font ภาษาไทย
-    
-    // --- Header ---
-    doc.setFontSize(18);
-    doc.text("Payslip / สลิปเงินเดือน", 105, 20, { align: 'center' });
-    doc.setFontSize(12);
-    doc.text("Your Company Name", 105, 30, { align: 'center' });
+    // ค้นหาข้อมูลของพนักงานที่ถูกเลือก
+    const employee = employees.find(emp => emp.scanId == empScanId); 
 
-    // --- Employee Info ---
-    doc.setFontSize(10);
-    doc.text(`Period: ${month}/${year}`, 14, 45);
-    doc.text(`Issue Date: ${issueDate}`, 14, 50);
-    
-    doc.text(`Employee ID: ${employee.id}`, 140, 45);
-    doc.text(`Name: ${employee.name}`, 140, 50);
-
-    // --- Earnings ---
-    doc.line(14, 60, 196, 60); // เส้นคั่น
-    doc.setFontSize(14);
-    doc.text("Earnings (รายรับ)", 14, 68);
-    doc.setFontSize(12);
-    doc.autoTable({
-        startY: 72,
-        head: [['Description', 'Amount (THB)']],
-        body: [
-            ['Basic Salary', result.grossSalary.toFixed(2)],
-            ['Overtime (OT) Pay', result.otPay.toFixed(2)],
-        ],
-        theme: 'plain',
-        styles: { fontSize: 12 },
-        headStyles: { fontStyle: 'bold' }
+    // กรองบันทึกเวลาให้เหลือเฉพาะของพนักงานและช่วงวันที่ที่เลือก
+    const filteredRecords = timeRecords.filter(rec => {
+        if (rec.scanId != empScanId) return false;
+        const workDate = convertToDate(rec.date);
+        workDate.setHours(0,0,0,0);
+        return workDate >= reportStartDate && workDate <= reportEndDate;
     });
 
-    // --- Deductions (ตัวอย่าง) ---
-    let finalY = doc.lastAutoTable.finalY + 10;
-    doc.setFontSize(14);
-    doc.text("Deductions (รายการหัก)", 14, finalY);
-    doc.setFontSize(12);
-    doc.autoTable({
-        startY: finalY + 4,
-        head: [['Description', 'Amount (THB)']],
-        body: [
-            ['Social Security', '0.00'], // Placeholder
-            ['Tax', '0.00'], // Placeholder
-        ],
-        theme: 'plain',
-        styles: { fontSize: 12 },
-        headStyles: { fontStyle: 'bold' }
+    // กรณีไม่พบข้อมูล
+    if (!employee || filteredRecords.length === 0) {
+        document.getElementById('individualReportResult').innerHTML = '<p>ไม่พบข้อมูลของพนักงานในช่วงวันที่ที่เลือก</p>';
+        return;
+    }
+    
+    // เริ่มสร้างตาราง HTML
+    let tableHTML = `
+        <h4>รายงานของ: ${employee.NAME} (${formatDate(startDateInput)} - ${formatDate(endDateInput)})</h4>
+        <table>
+            <thead>
+                <tr><th>วันที่</th><th>เวลาเข้า</th><th>เวลาออก</th><th>ชั่วโมงทำงาน</th><th>ชั่วโมง OT</th></tr>
+            </thead>
+            <tbody>`;
+
+    let totalWork = 0, totalOT = 0;
+    // วนลูปเพื่อสร้างแถวของข้อมูลแต่ละวัน
+    filteredRecords.forEach(rec => {
+        const { workHours, otHours, otWarning, totalDurationMilliseconds } = calculateWorkHoursAndOT(rec, employee);
+        
+        // ตรวจสอบสถานะของข้อมูล (สมบูรณ์หรือไม่)
+        if (rec.incomplete) {
+            // กรณีข้อมูลไม่สมบูรณ์
+            let timeInText = 'N/A';
+            let timeOutText = 'N/A';
+
+            if (rec.problem === 'Forgot OUT') {
+                timeInText = rec.times[0];
+                timeOutText = 'ไม่มีสแกนออก';
+            } else if (rec.problem === 'Forgot IN') {
+                timeInText = 'ไม่มีสแกนเข้า';
+                timeOutText = rec.times[0];
+            }
+            
+            tableHTML += `
+                <tr class="row-incomplete">
+                    <td>${formatDate(rec.date)}</td>
+                    <td>${timeInText}</td>
+                    <td>${timeOutText}</td>
+                    <td style="text-align: center;">-</td>
+                    <td style="text-align: center;">-</td>
+                </tr>`;
+
+        } else {
+            // กรณีข้อมูลสมบูรณ์
+            totalWork += workHours;
+            totalOT += otHours;
+            tableHTML += `
+                <tr>
+                    <td>${formatDate(rec.date)}</td>
+                    <td>${rec.times[0]}</td>
+                    <td>${rec.times[1]}</td>
+                    <td>${workHours.toFixed(1)} ชม.</td>
+                    <td class="${otWarning ? 'ot-warning' : ''}" title="${otWarning ? 'ทำ OT เกือบครบชั่วโมงถัดไป' : ''}">${otHours}</td>
+                </tr>`;
+        }
     });
 
-    // --- Summary ---
-    finalY = doc.lastAutoTable.finalY + 10;
-    const totalEarnings = result.grossSalary + result.otPay;
-    const totalDeductions = 0.00; // Placeholder
-    
-    doc.setFontSize(14);
-    doc.setFont('helvetica', 'bold');
-    doc.text("Net Salary (ยอดสุทธิ)", 140, finalY, { align: 'right' });
-    doc.text(`${result.totalSalary.toFixed(2)} THB`, 196, finalY, { align: 'right' });
+    // สร้างส่วนท้ายของตาราง (Footer) ที่มียอดรวม
+    tableHTML += `
+            </tbody>
+            <tfoot>
+                <tr>
+                    <td colspan="3"><strong>รวม (เฉพาะข้อมูลที่สมบูรณ์)</strong></td>
+                    <td><strong>${totalWork.toFixed(2)}</strong></td>
+                    <td><strong>${totalOT}</strong></td>
+                </tr>
+            </tfoot>
+        </table>`;
 
-    // --- Save File ---
-    doc.save(`payslip-${employee.id}-${payrollMonth}.pdf`);
+    // แสดงผลตารางในหน้าเว็บ
+    document.getElementById('individualReportResult').innerHTML = tableHTML;
 }
 
-function exportReport() { alert('ฟังก์ชันส่งออกรายงานยังไม่ถูกสร้าง'); }
-function printReport() { alert('ฟังก์ชันพิมพ์รายงานยังไม่ถูกสร้าง'); }
-function loadSampleEmployees() { alert('ฟังก์ชันโหลดข้อมูลตัวอย่างยังไม่ถูกสร้าง'); }
+        // --- 3. Utility and UI Functions ---
+
+        function displayOrphanScanReport() {
+            const container = document.getElementById('errorReportContainer');
+            if (orphanScans.length === 0) {
+                container.innerHTML = '';
+                return;
+            }
+            const scansWithNames = orphanScans.map(scan => {
+                const employee = employees.find(emp => emp.scanId == scan.scanId);
+                return { ...scan, name: employee ? employee.NAME : `ไม่พบ ID: ${scan.scanId}` };
+            });
+            let tableHTML = `
+                <h3 style="color: #d00;">🚨 รายการที่ต้องตรวจสอบ (${scansWithNames.length} รายการ)</h3>
+                <p>ข้อมูลเหล่านี้ไม่ถูกนำไปคำนวณ และต้องได้รับการแก้ไขด้วยตนเอง</p>
+                <table>
+                    <thead><tr><th>ชื่อพนักงาน</th><th>วันที่</th><th>เวลาที่สแกน</th><th>ปัญหาที่พบ</th></tr></thead>
+                    <tbody>`;
+            scansWithNames.forEach(scan => {
+                tableHTML += `
+                    <tr class="row-incomplete">
+                        <td>${scan.name}</td>
+                        <td>${formatDate(scan.date)}</td>
+                        <td>${scan.time}</td>
+                        <td>${scan.problem}</td>
+                    </tr>`;
+            });
+            tableHTML += '</tbody></table>';
+            container.innerHTML = tableHTML;
+        }
+
+        function populateEmployeeDropdown() {
+            const select = document.getElementById('report_employee_select');
+            select.innerHTML = '<option value="">-- กรุณาเลือกพนักงาน --</option>';
+            const validEmployees = employees.filter(emp => emp && emp.scanId && emp.NAME);
+            validEmployees.sort((a, b) => a.NAME.localeCompare(b.NAME))
+                .forEach(emp => {
+                    const option = document.createElement('option');
+                    option.value = emp.scanId;
+                    option.textContent = `${emp.NAME} (${emp.type})`;
+                    select.appendChild(option);
+                });
+        }
+        
+        function convertToDate(dmyString) {
+            const parts = dmyString.split('/');
+            return new Date(parts[2], parts[1] - 1, parts[0]);
+        }
+        
+        function formatDate(dateString) {
+            if (!dateString) return '';
+            if (dateString.includes('/')) return dateString;
+            const date = new Date(dateString);
+            const day = String(date.getDate()).padStart(2, '0');
+            const month = String(date.getMonth() + 1).padStart(2, '0');
+            const year = date.getFullYear();
+            return `${day}/${month}/${year}`;
+        }
+
+        function showTab(tabName, clickedButton) {
+            document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+            document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+            document.getElementById(tabName).classList.add('active');
+            clickedButton.classList.add('active');
+        }
+        
+        function showMessage(containerId, message, type = 'info') {
+            const target = document.getElementById(containerId);
+            if (!target) return;
+            const container = (target.id === 'upload' || target.id === 'reports') ? document.getElementById('uploadResult') : target;
+            const messageEl = document.createElement('div');
+            messageEl.className = type;
+            messageEl.innerHTML = message;
+            container.innerHTML = '';
+            container.appendChild(messageEl);
+        }
+
+        function formatDuration(ms) {
+            if (ms < 0) ms = 0;
+            const totalSeconds = Math.floor(ms / 1000);
+            const hours = Math.floor(totalSeconds / 3600);
+            const minutes = Math.floor((totalSeconds % 3600) / 60);
+            const seconds = totalSeconds % 60;
+
+            return `${hours} ชม. ${String(minutes).padStart(2, '0')} นาที ${String(seconds).padStart(2, '0')} วิ`;
+        }
+
+        // --- 4. Initialize ---
+        document.addEventListener('DOMContentLoaded', () => {
+            fetchAllEmployeesFromGoogleSheet();
+        });
