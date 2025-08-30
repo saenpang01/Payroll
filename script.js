@@ -58,7 +58,7 @@ function handleFileUpload(input) {
     const file = input.files[0];
     if (!file) return;
 
-    // 1. --- Reset State ---
+    // --- Reset State ---
     timeRecords = [];
     orphanScans = [];
     document.getElementById('calculationResult').innerHTML = '';
@@ -103,28 +103,31 @@ function handleFileUpload(input) {
                     }
                     return aDateTime.getTime() - bDateTime.getTime();
                 });
-
-            // --- [VIBE-CODE] ส่วนของ Consolidate Scans ที่ขาดหายไป ---
+                
+            // --- [VIBE-CODE] NEW: CONSOLIDATE REPEATED SCANS WITHIN 5 MINUTES ---
             const consolidatedScans = [];
-            for (let i = 0; i < sortedScans.length; i++) {
-                let currentScan = sortedScans[i];
-                while (
-                    i + 1 < sortedScans.length &&
-                    sortedScans[i+1][idHeader].trim() === currentScan[idHeader].trim()
-                ) {
-                    const currentScanTime = parseDateTime(currentScan[dateHeader], currentScan[timeHeader]);
-                    const nextScanTime = parseDateTime(sortedScans[i+1][dateHeader], sortedScans[i+1][timeHeader]);
-                    const diffHours = (nextScanTime - currentScanTime) / (1000 * 60 * 60);
-                    if (diffHours < CONSOLIDATION_WINDOW_HOURS) {
-                        i++; 
-                        currentScan = sortedScans[i];
-                    } else {
-                        break;
+            if (sortedScans.length > 0) {
+                for (let i = 0; i < sortedScans.length - 1; i++) {
+                    const currentScan = sortedScans[i];
+                    const nextScan = sortedScans[i + 1];
+
+                    // Check if the next scan is from the same employee
+                    if (currentScan[idHeader].trim() === nextScan[idHeader].trim()) {
+                        const currentTime = parseDateTime(currentScan[dateHeader], currentScan[timeHeader]);
+                        const nextTime = parseDateTime(nextScan[dateHeader], nextScan[timeHeader]);
+                        const diffMinutes = (nextTime - currentTime) / (1000 * 60);
+
+                        // If the difference is less than 5 minutes, skip the current scan
+                        if (diffMinutes <= 5) {
+                            continue; // The next iteration will handle the `nextScan`
+                        }
                     }
+                    consolidatedScans.push(currentScan);
                 }
-                consolidatedScans.push(currentScan);
+                // Always add the very last scan
+                consolidatedScans.push(sortedScans[sortedScans.length - 1]);
             }
-            // --- จบส่วนที่ขาดหายไป ---
+            // --- END OF CONSOLIDATION LOGIC ---
 
             const scansByEmployee = consolidatedScans.reduce((acc, scan) => {
                 const id = scan[idHeader].trim();
@@ -133,9 +136,6 @@ function handleFileUpload(input) {
                 return acc;
             }, {});
             
-            const LATE_SCAN_CUTOFF_HOUR = 18;
-            const LATE_SCAN_CUTOFF_MINUTE = 30;
-
             for (const id in scansByEmployee) {
                 const employeeScans = scansByEmployee[id];
                 let inScanRecord = null;
@@ -144,7 +144,7 @@ function handleFileUpload(input) {
                     const scanTime = parseDateTime(scan[dateHeader], scan[timeHeader]);
 
                     if (!inScanRecord) {
-                        if (scanTime.getHours() > LATE_SCAN_CUTOFF_HOUR || (scanTime.getHours() === LATE_SCAN_CUTOFF_HOUR && scanTime.getMinutes() > LATE_SCAN_CUTOFF_MINUTE)) {
+                        if (scanTime.getHours() >= 13) {
                             timeRecords.push({
                                 scanId: id,
                                 date: scan[dateHeader].trim(),
@@ -156,14 +156,37 @@ function handleFileUpload(input) {
                             inScanRecord = scan;
                         }
                     } else {
-                        timeRecords.push({
-                            scanId: id,
-                            date: inScanRecord[dateHeader].trim(),
-                            times: [inScanRecord[timeHeader].trim(), scan[timeHeader].trim()],
-                            incomplete: false,
-                            problem: null
-                        });
-                        inScanRecord = null;
+                        const inScanTime = parseDateTime(inScanRecord[dateHeader], inScanRecord[timeHeader]);
+                        const durationHours = (scanTime - inScanTime) / (1000 * 60 * 60);
+
+                        if (durationHours > 15) {
+                            timeRecords.push({
+                                scanId: id,
+                                date: inScanRecord[dateHeader].trim(),
+                                times: [inScanRecord[timeHeader].trim()],
+                                incomplete: true,
+                                problem: 'Forgot OUT'
+                            });
+                            inScanRecord = scan; 
+                        } else if (scanTime.getHours() < 2) { 
+                            timeRecords.push({
+                                scanId: id,
+                                date: inScanRecord[dateHeader].trim(),
+                                times: [inScanRecord[timeHeader].trim()],
+                                incomplete: true,
+                                problem: 'Forgot OUT'
+                            });
+                            inScanRecord = scan;
+                        } else {
+                            timeRecords.push({
+                                scanId: id,
+                                date: inScanRecord[dateHeader].trim(),
+                                times: [inScanRecord[timeHeader].trim(), scan[timeHeader].trim()],
+                                incomplete: false,
+                                problem: null
+                            });
+                            inScanRecord = null;
+                        }
                     }
                 });
 
@@ -312,42 +335,40 @@ function calculateWorkHoursAndOT(dailyTimeRecords, employee) {
             document.getElementById('calculationResult').innerHTML = tableHTML;
         }
 
-        function generateIndividualReport() {
-    // ดึงค่าจาก input fields บนหน้าเว็บ
+function generateIndividualReport() {
     const empScanId = document.getElementById('report_employee_select').value;
     const startDateInput = document.getElementById('report_start_date').value;
     const endDateInput = document.getElementById('report_end_date').value;
 
-    // ตรวจสอบว่าผู้ใช้กรอกข้อมูลครบถ้วนหรือไม่
     if (!empScanId || !startDateInput || !endDateInput) {
         alert('กรุณาเลือกพนักงานและช่วงวันที่ให้ครบถ้วน');
         return;
     }
-
-    // กำหนดช่วงวันที่สำหรับการกรองข้อมูล
+    
+    // ตั้งค่าวันที่ให้เป็น UTC เพื่อหลีกเลี่ยงปัญหา Timezone
     const reportStartDate = new Date(startDateInput);
-    reportStartDate.setHours(0, 0, 0, 0);
+    reportStartDate.setUTCHours(0, 0, 0, 0);
     const reportEndDate = new Date(endDateInput);
-    reportEndDate.setHours(23, 59, 59, 999);
+    reportEndDate.setUTCHours(23, 59, 59, 999); // สิ้นสุดวัน
 
-    // ค้นหาข้อมูลของพนักงานที่ถูกเลือก
     const employee = employees.find(emp => emp.scanId == empScanId); 
 
-    // กรองบันทึกเวลาให้เหลือเฉพาะของพนักงานและช่วงวันที่ที่เลือก
-    const filteredRecords = timeRecords.filter(rec => {
-        if (rec.scanId != empScanId) return false;
-        const workDate = convertToDate(rec.date);
-        workDate.setHours(0,0,0,0);
-        return workDate >= reportStartDate && workDate <= reportEndDate;
-    });
-
-    // กรณีไม่พบข้อมูล
-    if (!employee || filteredRecords.length === 0) {
-        document.getElementById('individualReportResult').innerHTML = '<p>ไม่พบข้อมูลของพนักงานในช่วงวันที่ที่เลือก</p>';
+    if (!employee) {
+        document.getElementById('individualReportResult').innerHTML = '<p>ไม่พบข้อมูลพนักงาน</p>';
         return;
     }
     
-    // เริ่มสร้างตาราง HTML
+    // --- [VIBE-CODE] BUG FIX: สร้าง Map ด้วย Key วันที่ที่เป็นมาตรฐาน (YYYY-MM-DD) ---
+    const recordsByDate = timeRecords
+        .filter(rec => rec.scanId == empScanId)
+        .reduce((acc, rec) => {
+            // แปลง Key จาก "DD/MM/YYYY" -> "YYYY-MM-DD"
+            const parts = rec.date.split('/');
+            const key = `${parts[2]}-${String(parts[1]).padStart(2, '0')}-${String(parts[0]).padStart(2, '0')}`;
+            acc[key] = rec;
+            return acc;
+        }, {});
+
     let tableHTML = `
         <h4>รายงานของ: ${employee.NAME} (${formatDate(startDateInput)} - ${formatDate(endDateInput)})</h4>
         <table>
@@ -357,49 +378,60 @@ function calculateWorkHoursAndOT(dailyTimeRecords, employee) {
             <tbody>`;
 
     let totalWork = 0, totalOT = 0;
-    // วนลูปเพื่อสร้างแถวของข้อมูลแต่ละวัน
-    filteredRecords.forEach(rec => {
-        const { workHours, otHours, otWarning, totalDurationMilliseconds } = calculateWorkHoursAndOT(rec, employee);
+    
+    // --- [VIBE-CODE] FINAL FIXED LOGIC: วนลูปและใช้ Key มาตรฐานในการค้นหา ---
+    for (let day = new Date(reportStartDate); day <= reportEndDate; day.setDate(day.getDate() + 1)) {
         
-        // ตรวจสอบสถานะของข้อมูล (สมบูรณ์หรือไม่)
-        if (rec.incomplete) {
-            // กรณีข้อมูลไม่สมบูรณ์
-            let timeInText = 'N/A';
-            let timeOutText = 'N/A';
+        // สร้าง Key สำหรับค้นหาในรูปแบบ "YYYY-MM-DD"
+        const y = day.getFullYear();
+        const m = String(day.getMonth() + 1).padStart(2, '0');
+        const d = String(day.getDate()).padStart(2, '0');
+        const lookupKey = `${y}-${m}-${d}`;
 
-            if (rec.problem === 'Forgot OUT') {
-                timeInText = rec.times[0];
-                timeOutText = 'ไม่มีสแกนออก';
-            } else if (rec.problem === 'Forgot IN') {
-                timeInText = 'ไม่มีสแกนเข้า';
-                timeOutText = rec.times[0];
-            }
+        // สร้างวันที่สำหรับแสดงผลในรูปแบบ "DD/MM/YYYY"
+        const displayDate = `${d}/${m}/${y}`;
+        
+        const rec = recordsByDate[lookupKey]; // ค้นหาข้อมูลด้วย Key ที่เป็นมาตรฐาน
+
+        if (rec) {
+            // กรณีพบข้อมูลของวันนี้
+            const { workHours, otHours, otWarning } = calculateWorkHoursAndOT(rec, employee);
             
-            tableHTML += `
-                <tr class="row-incomplete">
-                    <td>${formatDate(rec.date)}</td>
-                    <td>${timeInText}</td>
-                    <td>${timeOutText}</td>
-                    <td style="text-align: center;">-</td>
-                    <td style="text-align: center;">-</td>
-                </tr>`;
-
+            if (rec.incomplete) {
+                let timeInText = (rec.problem === 'Forgot IN') ? 'ไม่มีสแกนเข้า' : rec.times[0];
+                let timeOutText = (rec.problem === 'Forgot OUT') ? 'ไม่มีสแกนออก' : rec.times[0];
+                
+                tableHTML += `
+                    <tr class="row-incomplete">
+                        <td>${rec.date}</td>
+                        <td>${timeInText}</td>
+                        <td>${timeOutText}</td>
+                        <td style="text-align: center;">-</td>
+                        <td style="text-align: center;">-</td>
+                    </tr>`;
+            } else {
+                totalWork += workHours;
+                totalOT += otHours;
+                tableHTML += `
+                    <tr>
+                        <td>${rec.date}</td>
+                        <td>${rec.times[0]}</td>
+                        <td>${rec.times[1]}</td>
+                        <td>${workHours.toFixed(1)} ชม.</td>
+                        <td class="${otWarning ? 'ot-warning' : ''}" title="${otWarning ? 'ทำ OT เกือบครบชั่วโมงถัดไป' : ''}">${otHours}</td>
+                    </tr>`;
+            }
         } else {
-            // กรณีข้อมูลสมบูรณ์
-            totalWork += workHours;
-            totalOT += otHours;
+            // กรณีไม่พบข้อมูลของวันนี้
             tableHTML += `
-                <tr>
-                    <td>${formatDate(rec.date)}</td>
-                    <td>${rec.times[0]}</td>
-                    <td>${rec.times[1]}</td>
-                    <td>${workHours.toFixed(1)} ชม.</td>
-                    <td class="${otWarning ? 'ot-warning' : ''}" title="${otWarning ? 'ทำ OT เกือบครบชั่วโมงถัดไป' : ''}">${otHours}</td>
+                <tr class="row-no-scan">
+                    <td>${displayDate}</td>
+                    <td colspan="4">ไม่มีการสแกน</td>
                 </tr>`;
         }
-    });
+    }
+    // --- END OF FIXED LOGIC ---
 
-    // สร้างส่วนท้ายของตาราง (Footer) ที่มียอดรวม
     tableHTML += `
             </tbody>
             <tfoot>
@@ -411,7 +443,6 @@ function calculateWorkHoursAndOT(dailyTimeRecords, employee) {
             </tfoot>
         </table>`;
 
-    // แสดงผลตารางในหน้าเว็บ
     document.getElementById('individualReportResult').innerHTML = tableHTML;
 }
 

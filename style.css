@@ -314,6 +314,13 @@
         animation: pulse 1.5s infinite;
         }
 
+        row-no-scan td {
+    background-color: #f8f9fa !important; /* สีเทาอ่อน */
+    color: #6c757d !important;
+    text-align: center !important;
+    font-style: italic;
+}
+
         @keyframes pulse {
             0% { transform: scale(1); }
             50% { transform: scale(1.05); }
