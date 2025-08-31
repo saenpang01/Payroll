@@ -70,6 +70,7 @@ function handleFileUpload(input) {
     document.getElementById('progressFill').style.width = '0%';
     document.getElementById('progressText').textContent = 'กำลังประมวลผล...';
 
+    // [VIBE-CODE] BUG FIX: Removed "worker: true" to ensure data is processed correctly
     Papa.parse(file, {
         header: true,
         skipEmptyLines: true,
@@ -86,7 +87,6 @@ function handleFileUpload(input) {
                 uploadProgress.classList.add('hidden');
                 return;
             }
-
             const parseDateTime = (dateStr, timeStr) => {
                 const dateParts = dateStr.split('/');
                 const timeParts = timeStr.split(':');
@@ -104,113 +104,72 @@ function handleFileUpload(input) {
                     return aDateTime.getTime() - bDateTime.getTime();
                 });
                 
-            // --- [VIBE-CODE] NEW: CONSOLIDATE REPEATED SCANS WITHIN 5 MINUTES ---
             const consolidatedScans = [];
-            if (sortedScans.length > 0) {
-                for (let i = 0; i < sortedScans.length - 1; i++) {
-                    const currentScan = sortedScans[i];
-                    const nextScan = sortedScans[i + 1];
-
-                    // Check if the next scan is from the same employee
-                    if (currentScan[idHeader].trim() === nextScan[idHeader].trim()) {
-                        const currentTime = parseDateTime(currentScan[dateHeader], currentScan[timeHeader]);
-                        const nextTime = parseDateTime(nextScan[dateHeader], nextScan[timeHeader]);
-                        const diffMinutes = (nextTime - currentTime) / (1000 * 60);
-
-                        // If the difference is less than 5 minutes, skip the current scan
-                        if (diffMinutes <= 5) {
-                            continue; // The next iteration will handle the `nextScan`
-                        }
-                    }
-                    consolidatedScans.push(currentScan);
+            let i = 0;
+            while (i < sortedScans.length) {
+                let currentScan = sortedScans[i];
+                while (
+                    i + 1 < sortedScans.length &&
+                    sortedScans[i + 1][idHeader].trim() === currentScan[idHeader].trim()
+                ) {
+                    const currentTime = parseDateTime(currentScan[dateHeader], currentScan[timeHeader]);
+                    const nextTime = parseDateTime(sortedScans[i + 1][dateHeader], sortedScans[i + 1][timeHeader]);
+                    const diffMinutes = (nextTime - currentTime) / (1000 * 60);
+                    if (diffMinutes <= 5) {
+                        currentScan = sortedScans[i + 1]; 
+                        i++;
+                    } else { break; }
                 }
-                // Always add the very last scan
-                consolidatedScans.push(sortedScans[sortedScans.length - 1]);
+                consolidatedScans.push(currentScan);
+                i++;
             }
-            // --- END OF CONSOLIDATION LOGIC ---
-
-            const scansByEmployee = consolidatedScans.reduce((acc, scan) => {
-                const id = scan[idHeader].trim();
-                if (!acc[id]) acc[id] = [];
-                acc[id].push(scan);
-                return acc;
-            }, {});
             
-            for (const id in scansByEmployee) {
-                const employeeScans = scansByEmployee[id];
-                let inScanRecord = null;
+            // --- HIGH-PERFORMANCE, SINGLE-PASS PAIRING LOGIC ---
+            i = 0; // Reset index for the main loop
+            while (i < consolidatedScans.length) {
+                const scan1 = consolidatedScans[i];
+                const id1 = scan1[idHeader].trim();
+                const date1 = scan1[dateHeader].trim();
+                const time1Str = scan1[timeHeader].trim();
+                const time1 = parseDateTime(date1, time1Str);
+                const hour1 = time1.getHours();
 
-                employeeScans.forEach(scan => {
-                    const scanTime = parseDateTime(scan[dateHeader], scan[timeHeader]);
+                // Check if scan1 is a valid IN scan (02:00 - 13:59)
+                if (hour1 >= 2 && hour1 < 14) {
+                    const scan2 = consolidatedScans[i + 1];
 
-                    if (!inScanRecord) {
-                        if (scanTime.getHours() >= 13) {
-                            timeRecords.push({
-                                scanId: id,
-                                date: scan[dateHeader].trim(),
-                                times: [scan[timeHeader].trim()],
-                                incomplete: true,
-                                problem: 'Forgot IN'
-                            });
-                        } else {
-                            inScanRecord = scan;
-                        }
-                    } else {
-                        const inScanTime = parseDateTime(inScanRecord[dateHeader], inScanRecord[timeHeader]);
-                        const durationHours = (scanTime - inScanTime) / (1000 * 60 * 60);
+                    // Look ahead for a valid OUT scan
+                    if (scan2 && scan2[idHeader].trim() === id1) {
+                        const date2 = scan2[dateHeader].trim();
+                        const time2Str = scan2[timeHeader].trim();
+                        const time2 = parseDateTime(date2, time2Str);
+                        const hour2 = time2.getHours();
+                        const durationHours = (time2 - time1) / (1000 * 60 * 60);
 
-                        if (durationHours > 15) {
-                            timeRecords.push({
-                                scanId: id,
-                                date: inScanRecord[dateHeader].trim(),
-                                times: [inScanRecord[timeHeader].trim()],
-                                incomplete: true,
-                                problem: 'Forgot OUT'
-                            });
-                            inScanRecord = scan; 
-                        } else if (scanTime.getHours() < 2) { 
-                            timeRecords.push({
-                                scanId: id,
-                                date: inScanRecord[dateHeader].trim(),
-                                times: [inScanRecord[timeHeader].trim()],
-                                incomplete: true,
-                                problem: 'Forgot OUT'
-                            });
-                            inScanRecord = scan;
-                        } else {
-                            timeRecords.push({
-                                scanId: id,
-                                date: inScanRecord[dateHeader].trim(),
-                                times: [inScanRecord[timeHeader].trim(), scan[timeHeader].trim()],
-                                incomplete: false,
-                                problem: null
-                            });
-                            inScanRecord = null;
+                        // Check if scan2 is a valid OUT scan (14:00 - 01:59) and within duration
+                        if ((hour2 >= 14 || hour2 < 2) && durationHours <= 18) {
+                            timeRecords.push({ scanId: id1, date: date1, times: [time1Str, time2Str], incomplete: false, problem: null });
+                            i += 2; // Success, advance index by 2
+                            continue;
                         }
                     }
-                });
-
-                if (inScanRecord) {
-                    timeRecords.push({
-                        scanId: id,
-                        date: inScanRecord[dateHeader].trim(),
-                        times: [inScanRecord[timeHeader].trim()],
-                        incomplete: true,
-                        problem: 'Forgot OUT'
-                    });
+                    
+                    // If no valid OUT scan was found for scan1
+                    timeRecords.push({ scanId: id1, date: date1, times: [time1Str], incomplete: true, problem: 'Forgot OUT' });
+                    i++; // Advance index by 1
+                } else {
+                    // If scan1 is NOT a valid IN scan, it must be a "Forgot IN"
+                    timeRecords.push({ scanId: id1, date: date1, times: [time1Str], incomplete: true, problem: 'Forgot IN' });
+                    i++; // Advance index by 1
                 }
             }
             
             timeRecords.sort((a,b) => convertToDate(a.date) - convertToDate(b.date));
-
             document.getElementById('uploadResult').innerHTML = `<div class="success">✅ ประมวลผลสำเร็จ! พบข้อมูลทั้งหมด ${timeRecords.length} รายการ</div>`;
             document.getElementById('calculationSection').classList.remove('hidden');
+            displayOrphanScanReport();
             
-            setTimeout(() => { uploadProgress.classList.add('hidden'); }, 2000);
-        },
-        error: (err) => {
-            showMessage('upload', `เกิดข้อผิดพลาดในการอ่านไฟล์: ${err.message}`, 'error');
-            uploadProgress.classList.add('hidden');
+            setTimeout(() => { uploadProgress.classList.add('hidden'); }, 1500);
         }
     });
 }
